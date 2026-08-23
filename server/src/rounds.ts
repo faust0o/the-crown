@@ -1,0 +1,366 @@
+import { createHash, randomBytes, createHmac } from "node:crypto";
+import { prisma } from "./prisma";
+import { closeBook, openRound, type RoundBook } from "./market";
+import { oracle, BOARD_SIZE } from "./oracle/index";
+
+/**
+ * Round length. Rounds are wall-clock aligned, so at 30 minutes they open on
+ * the hour and the half hour. Set ROUND_MINUTES low to demo settlement without
+ * waiting — but note a change only takes effect once the in-flight round ends.
+ */
+export const ROUND_MINUTES = Number(process.env.ROUND_MINUTES ?? 30);
+/** Betting closes this long before the round ends; the cut lands inside it. */
+export const CUT_WINDOW_SECONDS = Number(process.env.CUT_WINDOW_SECONDS ?? 60);
+
+const ROUND_MS = ROUND_MINUTES * 60_000;
+const CUT_MS = CUT_WINDOW_SECONDS * 1_000;
+
+/** Rounds start on wall-clock boundaries so the schedule is predictable. */
+export function roundStartFor(now: number): Date {
+  return new Date(Math.floor(now / ROUND_MS) * ROUND_MS);
+}
+
+/**
+ * Where inside the cut window this round settles, derived from the seed.
+ *
+ * Deterministic given (seed, roundId) and therefore verifiable after the reveal:
+ * anyone can recompute this and check it against the published commitHash.
+ */
+export function cutOffsetMs(
+  seed: string,
+  roundId: string,
+  windowMs: number = CUT_MS
+): number {
+  const mac = createHmac("sha256", seed).update(roundId).digest();
+  return mac.readUInt32BE(0) % windowMs;
+}
+
+export const commitmentOf = (seed: string) =>
+  createHash("sha256").update(seed).digest("hex");
+
+/**
+ * Who wears the crown: the coin that finished #1 at the most recent settled cut.
+ *
+ * Null before any round has been cut, which leaves the whole board bettable for
+ * the very first round.
+ */
+export async function reigningCrown(): Promise<string | null> {
+  const last = await prisma.round.findFirst({
+    where: { cutAt: { not: null } },
+    orderBy: { startsAt: "desc" },
+    include: { entries: { where: { cutRank: 1 }, take: 1 } },
+  });
+  return last?.entries[0]?.symbol ?? null;
+}
+
+/**
+ * Open the market's book on a round before handing it out.
+ *
+ * Every price in the game is quoted off the tape, and the tape only knows a
+ * round once its book is open. Doing it here — the one call every price-reading
+ * path already makes — is what guarantees no caller ever meets a line that has
+ * never traded. Idempotent, so the once-a-second round loop costs a map lookup.
+ *
+ * The null case matters just as much: no live round means every line has already
+ * resolved, and a book left open on a dead round keeps quoting prices for bets
+ * nobody can place.
+ */
+function withBook<T extends RoundBook | null>(round: T): T {
+  if (round) openRound(round);
+  else closeBook();
+  return round;
+}
+
+/**
+ * Fetch the live round, opening it (and snapshotting the starting board) if the
+ * current wall-clock slot doesn't have one yet.
+ */
+export async function currentRound() {
+  const now = Date.now();
+  const include = { entries: { orderBy: { startRank: "asc" } } } as const;
+
+  // Any round that hasn't ended is *the* round, whether or not it sits on a slot
+  // boundary. Looking this up by end time rather than by slot is what keeps a
+  // recovery round (below) findable on the next tick — keying only on startsAt
+  // meant an unaligned round was never found again and a new one was opened
+  // every second.
+  const live = await prisma.round.findFirst({
+    where: { endsAt: { gt: new Date(now) } },
+    orderBy: { startsAt: "desc" },
+    include,
+  });
+  if (live) return withBook(live);
+
+  const startsAt = roundStartFor(now);
+  // Rounds always begin on a wall-clock boundary — on the hour at the default
+  // length — so the schedule is predictable and every player sees the same
+  // round open at the same moment. If this slot already holds a finished round
+  // (a length change, since a shorter round's boundaries land on a longer
+  // one's), we wait for the next boundary rather than starting an unaligned
+  // one. There is briefly no live round, which the UI already handles.
+  const taken = await prisma.round.findUnique({ where: { startsAt } });
+  if (taken) return withBook(null);
+
+  const standings = oracle.standings(BOARD_SIZE);
+  if (!standings.length) return withBook(null); // oracle not warm yet — don't open an empty round
+
+  const crownSymbol = await reigningCrown();
+  const seed = randomBytes(32).toString("hex");
+  const lockAt = new Date(startsAt.getTime() + ROUND_MS - CUT_MS);
+  const endsAt = new Date(startsAt.getTime() + ROUND_MS);
+
+  try {
+    const opened = await prisma.round.create({
+      data: {
+        startsAt,
+        lockAt,
+        endsAt,
+        crownSymbol,
+        cutWindowSeconds: CUT_WINDOW_SECONDS,
+        seed, // held back from the API until settlement
+        commitHash: commitmentOf(seed),
+        entries: {
+          create: standings.map((s) => ({
+            symbol: s.symbol,
+            ticker: s.ticker,
+            startRank: s.rank,
+            startVolume: s.quoteVolume,
+          })),
+        },
+      },
+      include: { entries: { orderBy: { startRank: "asc" } } },
+    });
+    return withBook(opened);
+  } catch (err) {
+    // Losing the race with a concurrent opener is the expected failure here —
+    // `startsAt` is unique, so the loser is the one that throws and the
+    // winner's round is already there to take.
+    const theirs = await prisma.round.findUnique({
+      where: { startsAt },
+      include: { entries: { orderBy: { startRank: "asc" } } },
+    });
+    // Nothing there means it wasn't a race: the round genuinely failed to open,
+    // and the next tick will fail the same way. Say so. Swallowing this is what
+    // turned a bad field into an hour of silence — the pool had arrived
+    // carrying one symbol twice, every create died on RoundEntry's
+    // (roundId, symbol) key, and the game simply stopped opening rounds with
+    // nothing in the log to say why.
+    if (!theirs) {
+      console.warn("⚠  could not open round:", err instanceof Error ? err.message : err);
+    }
+    return withBook(theirs);
+  }
+}
+
+/**
+ * Advance every round that isn't finished: close betting, record the board at
+ * the cut instant, then settle and reveal.
+ *
+ * Recording at the cut (rather than reconstructing it later) is what makes the
+ * result durable — the ranking only lives in memory, so if the process restarts
+ * between the cut and settlement there would be nothing to settle against.
+ */
+export async function tickRounds(): Promise<void> {
+  const now = new Date();
+  const live = await prisma.round.findMany({
+    where: { status: { in: ["OPEN", "LOCKED", "CUT"] } },
+    include: { entries: true },
+  });
+
+  for (const round of live) {
+    if (round.status === "OPEN" && now >= round.lockAt) {
+      await prisma.round.update({
+        where: { id: round.id },
+        data: { status: "LOCKED" },
+      });
+      round.status = "LOCKED";
+    }
+
+    if (round.status === "LOCKED") {
+      if (!round.seed) continue;
+      // Derived with the round's own window, not the current env's.
+      const cutAt = new Date(
+        round.lockAt.getTime() +
+          cutOffsetMs(round.seed, round.id, round.cutWindowSeconds * 1000)
+      );
+      if (now < cutAt) continue;
+      await recordCut(round.id, cutAt);
+      round.status = "CUT";
+    }
+
+    if (round.status === "CUT" && now >= round.endsAt) {
+      await settleRound(round.id);
+    }
+  }
+}
+
+/** Freeze the live board into the round's entries. */
+async function recordCut(roundId: string, cutAt: Date): Promise<void> {
+  const standings = oracle.standings(BOARD_SIZE);
+  const bySymbol = new Map(standings.map((s) => [s.symbol, s]));
+
+  await prisma.$transaction(async (tx) => {
+    const claimed = await tx.round.updateMany({
+      where: { id: roundId, status: "LOCKED" },
+      data: { status: "CUT", cutAt },
+    });
+    if (claimed.count !== 1) return; // another worker got there first
+
+    const entries = await tx.roundEntry.findMany({ where: { roundId } });
+    for (const e of entries) {
+      const now = bySymbol.get(e.symbol);
+      await tx.roundEntry.update({
+        where: { id: e.id },
+        // Dropping off the board counts as falling below its last visible slot.
+        data: {
+          cutRank: now?.rank ?? BOARD_SIZE + 1,
+          cutVolume: now?.quoteVolume ?? 0,
+        },
+      });
+    }
+  });
+}
+
+function outcomeOf(startRank: number, cutRank: number): "HIGHER" | "DRAW" | "LOWER" {
+  if (cutRank < startRank) return "HIGHER";
+  if (cutRank > startRank) return "LOWER";
+  return "DRAW";
+}
+
+/**
+ * Pay out every bet on the round, then publish the seed.
+ *
+ * Decided in memory and written in a fixed number of statements, whatever the
+ * size of the round. It used to be a transaction per bet, which was fine when a
+ * round held a handful of player bets and is not fine now that the desks put
+ * thousands through: at 0.3ms a bet, two thousand bets spent six-tenths of a
+ * second of round-trips inside a loop that runs every second.
+ *
+ * The round's own CUT → SETTLED flip is the claim, taken first and inside the
+ * transaction, so two workers cannot both pay the same round and a crash
+ * half-way rolls the whole thing back rather than leaving it half-paid.
+ *
+ * **Credits follow the rows that actually moved.** The status updates are
+ * guarded on `status = 'OPEN'`, so a bet that was closed between the read and
+ * the write is correctly skipped — but the amount to credit used to be summed
+ * from the *read*, which meant a skipped bet was still paid for. That is a bet
+ * settled and cashed out, one stake, two payouts. Summing from `RETURNING`
+ * instead makes the credit a consequence of the update rather than a parallel
+ * belief about it, and the two cannot drift apart no matter what raced.
+ */
+/** Test seam — settlement is otherwise only reachable from the round loop. */
+export async function settleRoundForTest(id: string) {
+  return settleRound(id);
+}
+async function settleRound(roundId: string): Promise<void> {
+  const round = await prisma.round.findUnique({
+    where: { id: roundId },
+    include: { entries: true, bets: { where: { status: "OPEN" } } },
+  });
+  if (!round || round.status === "SETTLED") return;
+
+  const cutBySymbol = new Map(round.entries.map((e) => [e.symbol, e.cutRank]));
+  const resolvedAt = new Date();
+
+  const won: { id: string; payout: number; cutRank: number }[] = [];
+  const lost: { id: string; cutRank: number }[] = [];
+  const voided: string[] = [];
+
+  for (const bet of round.bets) {
+    const cutRank = cutBySymbol.get(bet.symbol);
+    // No cut was recorded for that coin, and none ever will be — the cut is an
+    // instant that has passed. Leaving the bet OPEN used to strand it forever:
+    // the round settles around it, nothing ever revisits it, and the stake is
+    // simply gone. It is refunded instead, which is what VOID is for.
+    if (cutRank == null) {
+      voided.push(bet.id);
+    } else if (outcomeOf(bet.startRank, cutRank) === bet.direction) {
+      won.push({ id: bet.id, payout: Math.round(bet.stake * bet.odds), cutRank });
+    } else {
+      lost.push({ id: bet.id, cutRank });
+    }
+  }
+
+  await prisma.$transaction(
+    async (tx) => {
+      const claimed = await tx.round.updateMany({
+        where: { id: roundId, status: "CUT" },
+        data: { status: "SETTLED" },
+      });
+      if (claimed.count !== 1) return; // another worker is paying this one
+
+      // `unnest` turns each list into a table to join against, so the number of
+      // statements is fixed even when the number of bets is not. `RETURNING`
+      // reports which rows the guard actually let through — the only sound basis
+      // for crediting anyone.
+      const owed = new Map<string, number>();
+      const credit = (rows: { userId: string; amount: number }[]) => {
+        for (const { userId, amount } of rows) {
+          owed.set(userId, (owed.get(userId) ?? 0) + amount);
+        }
+      };
+
+      if (won.length) {
+        credit(
+          await tx.$queryRaw<{ userId: string; amount: number }[]>`
+            UPDATE "CryptoBet" AS b
+               SET status = 'WON'::"BetStatus", payout = v.payout,
+                   "cutRank" = v.cut, "resolvedAt" = ${resolvedAt}
+              FROM (SELECT unnest(${won.map((w) => w.id)}::text[]) AS id,
+                           unnest(${won.map((w) => w.payout)}::int[]) AS payout,
+                           unnest(${won.map((w) => w.cutRank)}::int[]) AS cut) AS v
+             WHERE b.id = v.id AND b.status = 'OPEN'::"BetStatus"
+         RETURNING b."userId" AS "userId", v.payout AS amount`
+        );
+      }
+      if (voided.length) {
+        credit(
+          await tx.$queryRaw<{ userId: string; amount: number }[]>`
+            UPDATE "CryptoBet" AS b
+               SET status = 'VOID'::"BetStatus", payout = b.stake,
+                   "resolvedAt" = ${resolvedAt}
+             WHERE b.id = ANY(${voided}::text[]) AND b.status = 'OPEN'::"BetStatus"
+         RETURNING b."userId" AS "userId", b.stake AS amount`
+        );
+      }
+      if (lost.length) {
+        await tx.$executeRaw`
+          UPDATE "CryptoBet" AS b
+             SET status = 'LOST'::"BetStatus", payout = 0,
+                 "cutRank" = v.cut, "resolvedAt" = ${resolvedAt}
+            FROM (SELECT unnest(${lost.map((l) => l.id)}::text[]) AS id,
+                         unnest(${lost.map((l) => l.cutRank)}::int[]) AS cut) AS v
+           WHERE b.id = v.id AND b.status = 'OPEN'::"BetStatus"`;
+      }
+      if (owed.size) {
+        const ids = [...owed.keys()];
+        await tx.$executeRaw`
+          UPDATE "User" AS u
+             SET credits = u.credits + v.amount
+            FROM (SELECT unnest(${ids}::text[]) AS id,
+                         unnest(${ids.map((id) => owed.get(id)!)}::int[]) AS amount) AS v
+           WHERE u.id = v.id`;
+      }
+    },
+    { timeout: 30_000 }
+  );
+}
+
+let timer: ReturnType<typeof setInterval> | null = null;
+
+/** Drive the round lifecycle. 1s cadence so the cut lands within a second of true. */
+export function startRoundLoop(): void {
+  if (timer) return;
+  const run = () => {
+    void currentRound()
+      .then(() => tickRounds())
+      .catch((err) => console.warn("⚠  round loop:", err?.message ?? err));
+  };
+  timer = setInterval(run, 1_000);
+  run();
+}
+
+export function stopRoundLoop(): void {
+  if (timer) clearInterval(timer);
+  timer = null;
+}

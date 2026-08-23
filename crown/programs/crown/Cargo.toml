@@ -1,0 +1,50 @@
+[package]
+name = "crown"
+version = "0.1.0"
+description = "Created with Anchor"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "crown"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+anchor-debug = []
+custom-heap = []
+custom-panic = []
+
+
+[dependencies]
+# `init-if-needed` is enabled for `authorize_relayer` alone, so a player can
+# re-point their relayer without a second account. The re-initialisation hazard
+# it warns about is handled there: the owner and the bet nonce are written only
+# when the account is fresh, so a repeat call can change the relayer and nothing
+# else. See the note in `authorize_relayer.rs`.
+anchor-lang = { version = "1.0.0", features = ["init-if-needed"] }
+anchor-spl = "1.0.0"
+# sha256 for the commit-reveal. Its own crate since the solana-program split;
+# on BPF this compiles to the syscall rather than a software implementation.
+solana-sha256-hasher = "3.1.0"
+
+[dev-dependencies]
+litesvm = "0.10.0"
+solana-message = "3.0.1"
+solana-transaction = "3.0.2"
+solana-signer = "3.0.0"
+solana-keypair = "3.0.1"
+# The lifecycle test builds system-program and SPL instructions by hand and warps
+# the clock, none of which the program itself needs.
+solana-system-interface = "2.0.0"
+solana-sysvar = "3.0.0"
+solana-clock = "3.0.0"
+solana-pubkey = "3.0.0"
+
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }

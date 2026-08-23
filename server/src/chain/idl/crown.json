@@ -1,0 +1,2065 @@
+{
+  "address": "EyeF41ia1T93ZKtgoSH9xrpawYuyhHjmrLhkWRESFucF",
+  "metadata": {
+    "name": "crown",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "add_entry",
+      "docs": [
+        "Put one coin on the board, with the opening auction's stake on each leg."
+      ],
+      "discriminator": [
+        170,
+        45,
+        66,
+        212,
+        251,
+        230,
+        45,
+        38
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.index",
+                "account": "Round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "entry",
+          "writable": true
+        },
+        {
+          "name": "authority_tokens",
+          "docs": [
+            "The opening stake is taken from here. It is a real deposit, not an",
+            "accounting entry — see the note on the transfer below."
+          ],
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "AddEntryArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "authorize_relayer",
+      "docs": [
+        "Name the relayer allowed to bet on the signer's behalf. Half of the",
+        "one-time setup that makes every later bet prompt-free; the SPL `approve`",
+        "alongside it is the other half."
+      ],
+      "discriminator": [
+        164,
+        158,
+        129,
+        204,
+        201,
+        28,
+        143,
+        11
+      ],
+      "accounts": [
+        {
+          "name": "delegation",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "relayer",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "close_bet",
+      "docs": [
+        "Sell a lot back to the book before the cut, at the current bid."
+      ],
+      "discriminator": [
+        185,
+        206,
+        13,
+        184,
+        176,
+        108,
+        140,
+        107
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.index",
+                "account": "Round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "entry",
+          "writable": true
+        },
+        {
+          "name": "bet",
+          "writable": true
+        },
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "bet"
+          ]
+        },
+        {
+          "name": "owner_tokens",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "rent_receiver",
+          "docs": [
+            "Gets the bet account's rent back when it closes.",
+            "",
+            "to keep rent-exempt and eight desks open fourteen thousand of them in a",
+            "half-hour round; left behind, that is twenty-five SOL a round of dead",
+            "storage. Closing here makes the cost revolving rather than cumulative."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "close_round",
+      "docs": [
+        "Reclaim a finished round's storage. Its entries go first — see",
+        "`close_round_entry` — and the evidence lives in the transactions, not the",
+        "account."
+      ],
+      "discriminator": [
+        149,
+        14,
+        81,
+        88,
+        230,
+        226,
+        234,
+        37
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.index",
+                "account": "Round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "close_round_entry",
+      "docs": [
+        "Reclaim one finished entry's storage."
+      ],
+      "discriminator": [
+        190,
+        119,
+        69,
+        65,
+        150,
+        26,
+        231,
+        58
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.index",
+                "account": "Round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "entry",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize",
+      "docs": [
+        "Stand up the config and the vault. Once, ever."
+      ],
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "credit_mint"
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "open_round",
+      "docs": [
+        "Open a round and publish the commitment to its cut instant."
+      ],
+      "discriminator": [
+        66,
+        235,
+        123,
+        240,
+        8,
+        35,
+        185,
+        159
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.round_count",
+                "account": "Config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "OpenRoundArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "place_bet",
+      "docs": [
+        "Buy a leg. The one path — players and desks alike."
+      ],
+      "discriminator": [
+        222,
+        62,
+        67,
+        220,
+        63,
+        166,
+        126,
+        33
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.index",
+                "account": "Round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "entry",
+          "writable": true
+        },
+        {
+          "name": "delegation",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bettor"
+              }
+            ]
+          }
+        },
+        {
+          "name": "bet",
+          "docs": [
+            "The position on this leg — opened on first contact, added to after.",
+            "",
+            "Keyed by the leg rather than by a counter, which is what lets a second buy",
+            "merge into the first instead of paying rent for a second account. It also",
+            "removes a failure mode: a nonce has to be read before the transaction is",
+            "built, so two bets prepared in the same moment derived the same address and",
+            "one of them simply failed to initialise. There is nothing left to race."
+          ],
+          "writable": true
+        },
+        {
+          "name": "bettor",
+          "docs": [
+            "signs nothing and is never written to."
+          ]
+        },
+        {
+          "name": "bettor_tokens",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "relayer",
+          "docs": [
+            "Pays the fee and the rent for the bet account, and is the key the player",
+            "named. The desks pass their own keypair here and are their own relayer."
+          ],
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "delegation"
+          ]
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "PlaceBetArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "record_cut",
+      "docs": [
+        "Freeze one coin's standing at the cut."
+      ],
+      "discriminator": [
+        72,
+        234,
+        59,
+        79,
+        44,
+        35,
+        182,
+        137
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.index",
+                "account": "Round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "entry",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "RecordCutArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "reveal_seed",
+      "docs": [
+        "Reveal the seed, proving the cut instant was fixed before the round ran."
+      ],
+      "discriminator": [
+        196,
+        119,
+        194,
+        112,
+        156,
+        211,
+        239,
+        105
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.index",
+                "account": "Round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "seed",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "settle_bet",
+      "docs": [
+        "Pay one settled lot what it is owed. Permissionless."
+      ],
+      "discriminator": [
+        115,
+        55,
+        234,
+        177,
+        227,
+        4,
+        10,
+        67
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.index",
+                "account": "Round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "entry"
+        },
+        {
+          "name": "bet",
+          "writable": true
+        },
+        {
+          "name": "owner_tokens",
+          "docs": [
+            "Where a winning payout goes. Constrained to the bet's owner, so calling",
+            "this for somebody else's bet pays *them*, which is why it can be open to",
+            "anyone."
+          ],
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "rent_receiver",
+          "docs": [
+            "Gets the bet account's rent back when it closes.",
+            "",
+            "to keep rent-exempt and eight desks open fourteen thousand of them in a",
+            "half-hour round; left behind, that is twenty-five SOL a round of dead",
+            "storage. Closing here makes the cost revolving rather than cumulative."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Bet",
+      "discriminator": [
+        147,
+        23,
+        35,
+        59,
+        15,
+        75,
+        155,
+        32
+      ]
+    },
+    {
+      "name": "Config",
+      "discriminator": [
+        155,
+        12,
+        170,
+        224,
+        30,
+        250,
+        204,
+        130
+      ]
+    },
+    {
+      "name": "Delegation",
+      "discriminator": [
+        237,
+        90,
+        140,
+        159,
+        124,
+        255,
+        243,
+        80
+      ]
+    },
+    {
+      "name": "Round",
+      "discriminator": [
+        87,
+        127,
+        165,
+        51,
+        73,
+        78,
+        116,
+        174
+      ]
+    },
+    {
+      "name": "RoundEntry",
+      "discriminator": [
+        67,
+        54,
+        5,
+        208,
+        163,
+        96,
+        48,
+        251
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "BetClosed",
+      "discriminator": [
+        122,
+        20,
+        157,
+        254,
+        221,
+        0,
+        39,
+        129
+      ]
+    },
+    {
+      "name": "BetPlaced",
+      "discriminator": [
+        88,
+        88,
+        145,
+        226,
+        126,
+        206,
+        32,
+        0
+      ]
+    },
+    {
+      "name": "BetSettled",
+      "discriminator": [
+        57,
+        145,
+        224,
+        160,
+        62,
+        119,
+        227,
+        206
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "BadStake",
+      "msg": "Stake must be a positive whole number of credits."
+    },
+    {
+      "code": 6001,
+      "name": "RoundClosed",
+      "msg": "Betting is closed for this round."
+    },
+    {
+      "code": 6002,
+      "name": "Unavailable",
+      "msg": "That outcome is not available for this coin."
+    },
+    {
+      "code": 6003,
+      "name": "Crown",
+      "msg": "That coin is wearing the crown and cannot be bet on."
+    },
+    {
+      "code": 6004,
+      "name": "WrongStatus",
+      "msg": "This round is not in the state that operation needs."
+    },
+    {
+      "code": 6005,
+      "name": "BadReveal",
+      "msg": "The revealed seed does not match the published commitment."
+    },
+    {
+      "code": 6006,
+      "name": "CutNotReached",
+      "msg": "The cut has not landed yet."
+    },
+    {
+      "code": 6007,
+      "name": "NoCut",
+      "msg": "No cut was recorded for that coin."
+    },
+    {
+      "code": 6008,
+      "name": "BetNotOpen",
+      "msg": "This bet is not open."
+    },
+    {
+      "code": 6009,
+      "name": "BadPrice",
+      "msg": "A price of zero cents would price an infinite payout."
+    },
+    {
+      "code": 6010,
+      "name": "SlippageExceeded",
+      "msg": "The book has moved past the price this order was willing to pay."
+    },
+    {
+      "code": 6011,
+      "name": "NotAuthority",
+      "msg": "Only the round's authority may do that."
+    },
+    {
+      "code": 6012,
+      "name": "NoSuchEntry",
+      "msg": "That entry index is not in this round."
+    },
+    {
+      "code": 6013,
+      "name": "Overflow",
+      "msg": "Arithmetic overflowed."
+    },
+    {
+      "code": 6014,
+      "name": "BadDirection",
+      "msg": "A direction must be 0 (HIGHER), 1 (DRAW) or 2 (LOWER)."
+    },
+    {
+      "code": 6015,
+      "name": "VaultUnderfunded",
+      "msg": "The vault does not hold enough to pay this out."
+    }
+  ],
+  "types": [
+    {
+      "name": "AddEntryArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "index",
+            "type": "u8"
+          },
+          {
+            "name": "symbol",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "ticker",
+            "type": {
+              "array": [
+                "u8",
+                12
+              ]
+            }
+          },
+          {
+            "name": "start_rank",
+            "type": "u16"
+          },
+          {
+            "name": "quoted",
+            "docs": [
+              "Which legs this coin is offered on."
+            ],
+            "type": {
+              "array": [
+                "bool",
+                3
+              ]
+            }
+          },
+          {
+            "name": "opening",
+            "docs": [
+              "The opening auction's stake on each leg, in credits."
+            ],
+            "type": {
+              "array": [
+                "u64",
+                3
+              ]
+            }
+          },
+          {
+            "name": "target",
+            "docs": [
+              "Cents the quoted legs divide between them — a hundred, less the share of",
+              "any leg that is real but has no line."
+            ],
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Bet",
+      "docs": [
+        "A position: everything one owner holds on one leg of one coin.",
+        "",
+        "**Shares, not a price.** Buying the same leg twice adds to this account rather",
+        "than opening a second one, and that is lossless because what a position is",
+        "owed does not depend on how it was assembled: a buy of `s` credits at `c`",
+        "cents earns `s·100/c` shares, each worth one credit if the leg lands, so two",
+        "buys are worth exactly the sum of their shares however far apart their prices",
+        "were.",
+        "",
+        "`specs/positions-and-bots.md` was right that a position's value cannot be",
+        "re-derived from *average odds* — that really does lose the information. What it",
+        "concluded from that was that lots must be stored separately, and storing shares",
+        "is the other way out: the average entry price is recoverable as",
+        "`stake·100/shares` for display, and nothing that decides money is computed from",
+        "it. The client already aggregates by `(round, symbol, direction)` for exactly",
+        "this reason, so this is the shape a player is shown anyway.",
+        "",
+        "Why it matters here and not in Postgres: a row costs nothing and an account",
+        "costs rent. One account per *fill* made the cost of running the market a",
+        "function of how often the desks traded — fourteen thousand accounts and",
+        "twenty-eight SOL for a half-hour round at a one-second tick. One account per",
+        "*position* bounds it at desks × coins × legs, which no tick rate can move. The",
+        "desks can trade as often as the signal deserves.",
+        "",
+        "The individual fills are not lost, they are just not *here*: every one emits a",
+        "`BetPlaced` carrying its own price and the book it left behind, which is what",
+        "the tape and the lot-by-lot breakdown are built from."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "entry_index",
+            "type": "u8"
+          },
+          {
+            "name": "direction",
+            "type": "u8"
+          },
+          {
+            "name": "stake",
+            "docs": [
+              "Credits put in, cumulative. What the position cost, and what comes back",
+              "out of the book's flow when it closes."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "shares",
+            "docs": [
+              "What the position is owed if this leg lands, in credits. The only number",
+              "settlement reads."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "start_rank",
+            "docs": [
+              "Where the coin stood when the round opened — the thing the bet is a claim",
+              "about. Copied in so settlement does not need the entry to decide an",
+              "outcome it already has the facts for."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "BetStatus"
+              }
+            }
+          },
+          {
+            "name": "payout",
+            "type": "u64"
+          },
+          {
+            "name": "opened_at",
+            "type": "i64"
+          },
+          {
+            "name": "resolved_at",
+            "type": "i64"
+          },
+          {
+            "name": "rent_payer",
+            "docs": [
+              "Who paid this account's rent, and who gets it back when it closes.",
+              "",
+              "A settled position is a finished fact and its account is dead weight, so",
+              "`settle_bet` closes it and returns the rent. That makes rent a revolving",
+              "requirement bounded by what is open right now, rather than one that grows",
+              "with every position ever taken."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BetClosed",
+      "docs": [
+        "A position sold back to the book before the cut."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "entry_index",
+            "type": "u8"
+          },
+          {
+            "name": "direction",
+            "type": "u8"
+          },
+          {
+            "name": "stake",
+            "type": "u64"
+          },
+          {
+            "name": "shares",
+            "type": "u64"
+          },
+          {
+            "name": "bid_cents",
+            "docs": [
+              "The bid it closed into — walked through the pool by its own size, which is",
+              "worse than the resting quote and is the number that actually paid."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "payout",
+            "type": "u64"
+          },
+          {
+            "name": "closed_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BetPlaced",
+      "docs": [
+        "A fill, and the book it left behind.",
+        "",
+        "The marks are carried so an indexer can rebuild the tape without re-deriving",
+        "prices — which it could do, since `server/src/chain/pricing.ts` is the same",
+        "arithmetic, but a record of what the book *was* at each fill is not something",
+        "a later read of the account can reconstruct."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "entry_index",
+            "type": "u8"
+          },
+          {
+            "name": "direction",
+            "type": "u8"
+          },
+          {
+            "name": "stake",
+            "docs": [
+              "This buy's own stake and shares, not the position's running total.",
+              "",
+              "The account holds only the sum, so these are the lot-by-lot record: the",
+              "tape, the breakdown behind an aggregate position, and a player's average",
+              "entry all rebuild from the stream of these rather than from storage."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "shares",
+            "type": "u64"
+          },
+          {
+            "name": "fill_cents",
+            "type": "u16"
+          },
+          {
+            "name": "marks",
+            "type": {
+              "array": [
+                "u16",
+                3
+              ]
+            }
+          },
+          {
+            "name": "placed_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BetSettled",
+      "docs": [
+        "A position resolved with the round — won, lost, or voided for want of a cut."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "entry_index",
+            "type": "u8"
+          },
+          {
+            "name": "direction",
+            "type": "u8"
+          },
+          {
+            "name": "stake",
+            "docs": [
+              "Credits put in across every buy that built this position."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "shares",
+            "docs": [
+              "What it was owed if the leg landed — and what it was paid, if it did."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "start_rank",
+            "type": "u16"
+          },
+          {
+            "name": "cut_rank",
+            "docs": [
+              "Where the coin actually finished. 0 when no cut was recorded."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "BetStatus"
+              }
+            }
+          },
+          {
+            "name": "payout",
+            "type": "u64"
+          },
+          {
+            "name": "settled_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BetStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Open"
+          },
+          {
+            "name": "Won"
+          },
+          {
+            "name": "Lost"
+          },
+          {
+            "name": "CashedOut"
+          },
+          {
+            "name": "Void"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Config",
+      "docs": [
+        "Program-wide configuration, and the authority over the vault.",
+        "",
+        "The `authority` opens rounds, posts entries and reveals seeds. It is *not*",
+        "able to move the vault arbitrarily: the vault's authority is this PDA, and the",
+        "only instructions that sign for it are the payout paths, whose amounts are",
+        "computed from bets the program itself wrote. That distinction is the whole",
+        "custody story — a compromised authority key can open a nonsense round, but it",
+        "cannot transfer a player's stake to itself."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "credit_mint",
+            "docs": [
+              "The SPL mint credits are denominated in."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "round_count",
+            "docs": [
+              "Rounds opened so far — the seed for the next one."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "vault_bump",
+            "docs": [
+              "Bump for the vault authority PDA, cached so payouts don't re-derive it."
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Delegation",
+      "docs": [
+        "Who may place bets on a player's behalf, and out of what allowance.",
+        "",
+        "This exists because the delegate flow removes the player's signature from",
+        "`place_bet`, and removing a signature without replacing it with something",
+        "would leave *anybody* able to trade a delegated player's balance. The SPL",
+        "allowance bounds how much can be spent; it says nothing about who may spend",
+        "it or on what. A griefer could not steal the credits, but could burn them on",
+        "the worst leg on the board, which is not a meaningfully better outcome.",
+        "",
+        "So the player names a relayer, and `place_bet` requires that relayer's",
+        "signature. Two independent things now have to hold before a credit moves: the",
+        "SPL delegate must be this program's PDA, and the caller must be the relayer",
+        "this account names. The player can end it from either side — `revoke` on the",
+        "token account, or closing this — and neither needs the server's cooperation."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "relayer",
+            "docs": [
+              "The only key that may place bets for `owner` without `owner` signing."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OpenRoundArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "starts_at",
+            "type": "i64"
+          },
+          {
+            "name": "lock_at",
+            "type": "i64"
+          },
+          {
+            "name": "ends_at",
+            "type": "i64"
+          },
+          {
+            "name": "commit_hash",
+            "docs": [
+              "sha256(seed). The seed itself is withheld until `reveal_seed`."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "cut_window_seconds",
+            "type": "u32"
+          },
+          {
+            "name": "crown_symbol",
+            "docs": [
+              "The coin wearing the crown, or all zeroes for the very first round."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "PlaceBetArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "direction",
+            "type": "u8"
+          },
+          {
+            "name": "stake",
+            "type": "u64"
+          },
+          {
+            "name": "max_cents",
+            "docs": [
+              "The worst price this order will accept, in cents.",
+              "",
+              "Not optional, and not a courtesy. A desk sizes its clip against the book",
+              "it read a moment ago, and between that read and this instruction landing",
+              "the book can have moved — seven other desks are trading the same coin at",
+              "the same second, and every one of their fills re-marks it. Without a bound",
+              "the order fills at whatever it finds, which is precisely the \"buy big,",
+              "close immediately\" free-money case `average_mark` exists to close, run",
+              "backwards. Pass `CAP_CENTS` to genuinely not care."
+            ],
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RecordCutArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "cut_rank",
+            "docs": [
+              "1-based, and never 0 — 0 is how an unrecorded entry is spelled. A coin",
+              "that has fallen off the board is recorded one place below the last visible",
+              "slot, which is how `recordCut` in `rounds.ts` has always settled it."
+            ],
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Round",
+      "docs": [
+        "One round of competition.",
+        "",
+        "The settlement instant (\"the cut\") is a random point inside the final minute,",
+        "so a pump timed at a known deadline cannot decide the outcome. It is committed",
+        "up front: `commit_hash` = sha256(seed) is published when the round opens,",
+        "`seed` is revealed at settlement, and `cut_at` is derived from the seed — so",
+        "anyone can verify the house did not pick a convenient moment. Moving this",
+        "on-chain is what makes that verification something a player can do without",
+        "trusting the server to serve them an honest `commitHash`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "index",
+            "type": "u64"
+          },
+          {
+            "name": "starts_at",
+            "type": "i64"
+          },
+          {
+            "name": "lock_at",
+            "docs": [
+              "Betting closes."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "ends_at",
+            "docs": [
+              "`lock_at` plus the cut window."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "commit_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "seed",
+            "docs": [
+              "All zeroes until `reveal_seed`. `status == Settled` is what says it has",
+              "been revealed; a separate flag restated the same fact."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "cut_at",
+            "docs": [
+              "Derived from the seed; set when the cut lands."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "cut_window_seconds",
+            "docs": [
+              "The window this round actually used. Stored rather than read from config",
+              "at verification time: the cut instant is derived as HMAC(seed, index) mod",
+              "this value, so a later config change would otherwise make settled rounds",
+              "fail their own verification."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "crown_symbol",
+            "docs": [
+              "The coin wearing the crown. It cannot be bet on."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "RoundStatus"
+              }
+            }
+          },
+          {
+            "name": "entry_count",
+            "docs": [
+              "How many coins are on the board, so a reader knows how many entry",
+              "accounts to fetch without probing indices."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RoundEntry",
+      "docs": [
+        "A coin's standing in one round, and the book on it.",
+        "",
+        "`opening` is what the round's opening auction staked on each leg — the model's",
+        "one and only word on price, posted by the authority at `add_entry` because",
+        "computing it needs the priors. From there the mark is this pool's share of the",
+        "coin's, and every credit traded dilutes it."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u8"
+          },
+          {
+            "name": "symbol",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "ticker",
+            "type": {
+              "array": [
+                "u8",
+                12
+              ]
+            }
+          },
+          {
+            "name": "start_rank",
+            "type": "u16"
+          },
+          {
+            "name": "cut_rank",
+            "docs": [
+              "0 until the cut is recorded. Ranks are 1-based, so 0 is unambiguous."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "opening",
+            "docs": [
+              "Credits the opening auction staked on each leg."
+            ],
+            "type": {
+              "array": [
+                "u64",
+                3
+              ]
+            }
+          },
+          {
+            "name": "flow",
+            "docs": [
+              "Credits bought on each leg since. The only thing that moves a price."
+            ],
+            "type": {
+              "array": [
+                "u64",
+                3
+              ]
+            }
+          },
+          {
+            "name": "quoted",
+            "docs": [
+              "Which legs are on the book. A leg can be real and still not be offered."
+            ],
+            "type": {
+              "array": [
+                "bool",
+                3
+              ]
+            }
+          },
+          {
+            "name": "target",
+            "docs": [
+              "Cents the quoted legs divide between them — a hundred, less the share of",
+              "any leg that is real but has no line."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "last_cents",
+            "docs": [
+              "The last mark on each leg, so a reader does not have to re-derive them."
+            ],
+            "type": {
+              "array": [
+                "u16",
+                3
+              ]
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RoundStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Open"
+          },
+          {
+            "name": "Cut"
+          },
+          {
+            "name": "Settled"
+          }
+        ]
+      }
+    }
+  ],
+  "constants": [
+    {
+      "name": "BET_SEED",
+      "type": "bytes",
+      "value": "[98, 101, 116]"
+    },
+    {
+      "name": "CONFIG_SEED",
+      "docs": [
+        "PDA seeds.",
+        "",
+        "`CONFIG` earns its keep three times over: it is the config account, the owner",
+        "of the vault, and the SPL delegate a player approves. One PDA for all three",
+        "means a player's `approve` names an address that provably belongs to this",
+        "program, and the payout path signs with the same seeds it already had."
+      ],
+      "type": "bytes",
+      "value": "[99, 111, 110, 102, 105, 103]"
+    },
+    {
+      "name": "DELEGATION_SEED",
+      "type": "bytes",
+      "value": "[100, 101, 108, 101, 103, 97, 116, 105, 111, 110]"
+    },
+    {
+      "name": "ENTRY_SEED",
+      "type": "bytes",
+      "value": "[101, 110, 116, 114, 121]"
+    },
+    {
+      "name": "ROUND_SEED",
+      "type": "bytes",
+      "value": "[114, 111, 117, 110, 100]"
+    },
+    {
+      "name": "VAULT_SEED",
+      "type": "bytes",
+      "value": "[118, 97, 117, 108, 116]"
+    }
+  ]
+}

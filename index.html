@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/crown-icon.svg" />
+    <link rel="apple-touch-icon" href="/crown-icon-180.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>The Crown · Utopian Contributors</title>
+    <meta
+      name="description"
+      content="Solana's top assets, ranked by volume. Ten majors race for the crown — bet the ranking."
+    />
+
+    <!--
+      Link previews. `og:image` is relative here and rewritten to an absolute
+      URL by scripts/prerender.mjs when SITE_ORIGIN is set at build time —
+      most scrapers cope with a relative one, but not all of them do.
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="The Crown · Utopian Contributors" />
+    <meta
+      property="og:description"
+      content="Solana's top assets, ranked by volume. Ten majors race for the crown — bet the ranking."
+    />
+    <meta property="og:image" content="/crown-og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="/crown-og.png" />
+
+    <!--
+      Fathom — beautiful, simple website analytics.
+      This site ID is utopiancontributors.com's, which is where the game used to
+      be served from. Replace it with The Crown's own once thecrowngame.fun has
+      a property, or its traffic keeps landing in the old one.
+    -->
+    <script
+      src="https://cdn.usefathom.com/script.js"
+      data-site="IMHTEBPM"
+      defer
+    ></script>
+    <!-- / Fathom -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

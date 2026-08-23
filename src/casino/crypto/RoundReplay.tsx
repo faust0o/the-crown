@@ -1,0 +1,521 @@
+import { useMemo } from "react";
+import { useQuery } from "@apollo/client/react";
+import { formatCompact } from "../format";
+import { CoinIcon } from "./CoinIcon";
+import { FlowFeed } from "./FlowFeed";
+import { useRoundVerification } from "./verify";
+import { VolumeChart } from "./VolumeChart";
+import {
+  ROUND_REPLAY,
+  type CryptoBet,
+  type Direction,
+  type Entry,
+  type FlowEvent,
+  type RankPoint,
+  type Round,
+  type Standing,
+} from "./graphql";
+
+const TONE: Record<Direction, { label: string; color: string }> = {
+  HIGHER: { label: "Higher", color: "var(--up)" },
+  DRAW: { label: "Same", color: "var(--gold)" },
+  LOWER: { label: "Lower", color: "var(--down)" },
+};
+
+const STATUS: Record<string, string> = {
+  OPEN: "open",
+  WON: "won",
+  LOST: "lost",
+  VOID: "void",
+  CASHED_OUT: "closed",
+};
+
+/** What a token's start-to-cut move paid, or null if it never got a cut. */
+function outcomeOf(startRank: number, cutRank: number | null): Direction | null {
+  if (cutRank == null) return null;
+  if (cutRank < startRank) return "HIGHER";
+  if (cutRank > startRank) return "LOWER";
+  return "DRAW";
+}
+
+const hhmm = (t: string | number) =>
+  new Date(t).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+
+const hhmmss = (t: string | number) => new Date(t).toLocaleTimeString();
+
+interface Meta {
+  ticker: string;
+  name: string;
+  imageUrl: string | null;
+}
+
+/**
+ * The round's rank changes, rebuilt from its samples.
+ *
+ * The live feed is derived the same way, but server-side and from the oracle's
+ * in-memory buffer — which only reaches back an hour or so. A replay has to work
+ * off the persisted samples the chart already fetches, and the derivation is
+ * cheap enough to redo here rather than adding a second round trip.
+ */
+function flowFrom(history: RankPoint[], meta: Map<string, Meta>): FlowEvent[] {
+  const byTime = new Map<number, RankPoint[]>();
+  for (const p of history) {
+    const at = byTime.get(p.t);
+    if (at) at.push(p);
+    else byTime.set(p.t, [p]);
+  }
+
+  const out: FlowEvent[] = [];
+  let previous: Map<string, number> | null = null;
+  for (const t of [...byTime.keys()].sort((a, b) => a - b)) {
+    const points = byTime.get(t)!;
+    if (previous) {
+      for (const p of points) {
+        const from = previous.get(p.symbol) ?? null;
+        if (from === p.rank) continue;
+        out.push({
+          at: t,
+          symbol: p.symbol,
+          ticker: meta.get(p.symbol)?.ticker ?? p.symbol,
+          imageUrl: meta.get(p.symbol)?.imageUrl ?? null,
+          from,
+          to: p.rank,
+          quoteVolume: p.quoteVolume,
+        });
+      }
+    }
+    previous = new Map(points.map((p) => [p.symbol, p.rank]));
+  }
+  return out.reverse(); // newest first, like the live feed
+}
+
+/**
+ * A settled round, replayed in place of the live board.
+ *
+ * Nothing here is bettable and nothing here polls: the race is over, so every
+ * number on the page is the one the round finished on. The buy panel's slot goes
+ * to the resolution — how the round ended, whether its cut verifies, and what it
+ * did to the player's balance.
+ */
+export function RoundReplay({
+  round,
+  standings,
+  justEnded = false,
+  onExit,
+}: {
+  round: Round;
+  /** Live board. Only a backstop now that the round carries its own logos. */
+  standings: Standing[];
+  /** The round ended under the player, rather than being picked off the list. */
+  justEnded?: boolean;
+  onExit: () => void;
+}) {
+  const { data, loading } = useQuery(ROUND_REPLAY, {
+    variables: { roundId: round.id },
+    fetchPolicy: "cache-and-network",
+  });
+
+  const history = useMemo(() => data?.roundReplay ?? [], [data]);
+  const tokens = useMemo(() => data?.roundTokens ?? [], [data]);
+  const bets = useMemo(() => data?.myCryptoBets ?? [], [data]);
+
+  const meta = useMemo(() => {
+    // Widest source first, narrowest last. `roundTokens` covers every coin the
+    // round touched — including ones that only climbed onto the board mid-round,
+    // which appear in the samples and so in the flow without ever being entries.
+    // The live board is only a stand-in for a token seen for the first time
+    // since the server last wrote its identity down, and the entries win
+    // outright because their tickers are the ones the round was scored under.
+    const m = new Map<string, Meta>();
+    for (const s of standings) {
+      m.set(s.symbol, { ticker: s.ticker, name: s.name, imageUrl: s.imageUrl });
+    }
+    for (const t of tokens) {
+      m.set(t.symbol, { ticker: t.ticker, name: t.name, imageUrl: t.imageUrl });
+    }
+    for (const e of round.entries) {
+      const known = m.get(e.symbol);
+      m.set(e.symbol, {
+        ticker: e.ticker,
+        name: known?.name ?? e.ticker,
+        imageUrl: e.imageUrl ?? known?.imageUrl ?? null,
+      });
+    }
+    return m;
+  }, [round.entries, standings, tokens]);
+
+  // Volume as of the last sample of the round, not the token's volume now —
+  // this is a replay, so every figure on the page belongs to the round.
+  const cutVolume = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of history) m.set(p.symbol, p.quoteVolume); // oldest first
+    return m;
+  }, [history]);
+
+  const finished = useMemo(
+    () => [...round.entries].sort((a, b) => (a.cutRank ?? 99) - (b.cutRank ?? 99)),
+    [round.entries]
+  );
+
+  // The chart plots each coin's share of the field, so the field has to be the
+  // round's ten — the samples also carry whatever climbed onto the board while
+  // the round ran, and counting those into the total would shrink every share.
+  const chartHistory = useMemo(() => {
+    const field = new Set(round.entries.map((e) => e.symbol));
+    return history.filter((p) => field.has(p.symbol));
+  }, [history, round.entries]);
+
+  // The chart wants standings; the round's final ordering is what it gets.
+  const asStandings = useMemo<Standing[]>(
+    () =>
+      finished.map((e) => ({
+        symbol: e.symbol,
+        ticker: e.ticker,
+        name: meta.get(e.symbol)?.name ?? e.ticker,
+        imageUrl: meta.get(e.symbol)?.imageUrl ?? null,
+        rank: e.cutRank ?? e.startRank,
+        previousRank: e.startRank,
+        quoteVolume: cutVolume.get(e.symbol) ?? 0,
+        price: 0,
+        trades1h: 0,
+        wallets1h: 0,
+        priceChange1hPercent: 0,
+      })),
+    [finished, meta, cutVolume]
+  );
+
+  const flow = useMemo(() => flowFrom(history, meta), [history, meta]);
+
+  return (
+    <div className="flex flex-col gap-5">
+      <ReplayBar round={round} justEnded={justEnded} onExit={onExit} />
+
+      <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
+        <div className="flex min-w-0 flex-col gap-5">
+          {chartHistory.length ? (
+            <VolumeChart history={chartHistory} standings={asStandings} window="round" replay />
+          ) : (
+            <div className="rounded-lg border border-hairline bg-surface p-8 text-center text-sm text-muted">
+              {loading ? "loading the round…" : "No samples were recorded for this round."}
+            </div>
+          )}
+          <FinalBoard entries={finished} meta={meta} cutVolume={cutVolume} />
+        </div>
+
+        <div className="flex min-w-0 flex-col gap-5">
+          <Resolution round={round} bets={bets} meta={meta} cutVolume={cutVolume} />
+          <TxLog bets={bets} meta={meta} />
+          <FlowFeed events={flow} note="replay" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReplayBar({
+  round,
+  justEnded,
+  onExit,
+}: {
+  round: Round;
+  justEnded: boolean;
+  onExit: () => void;
+}) {
+  return (
+    <div className="casino-animate-in flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-hairline bg-inset px-4 py-2.5">
+      <span className="shrink-0 rounded border border-hairline px-1.5 py-px text-[10px] uppercase tracking-wider text-gold">
+        {justEnded ? "round over" : "replay"}
+      </span>
+      <span className="font-mono text-sm tabular-nums text-foreground">
+        {hhmm(round.startsAt)} – {hhmm(round.endsAt)}
+      </span>
+      <span className="text-xs text-muted">
+        {justEnded
+          ? "That round just settled — here is how it finished. The next one is already running."
+          : "This round is over — the board below is where it finished, and nothing on it can be backed."}
+      </span>
+      <button
+        type="button"
+        onClick={onExit}
+        className="ml-auto shrink-0 rounded-md border border-hairline px-2.5 py-1 text-xs text-secondary transition-colors hover:text-foreground"
+      >
+        {justEnded ? "Go to the new round" : "Back to the live round"}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Where the field finished.
+ *
+ * Deliberately not `RankBoard`: that board exists to be traded on, and every
+ * price it quotes is a live one. Here the only honest thing to show in the
+ * column the price chips occupy is which side the token's move actually paid.
+ */
+function FinalBoard({
+  entries,
+  meta,
+  cutVolume,
+}: {
+  entries: Entry[];
+  meta: Map<string, Meta>;
+  cutVolume: Map<string, number>;
+}) {
+  const total = entries.reduce((n, e) => n + (cutVolume.get(e.symbol) ?? 0), 0);
+
+  return (
+    <div className="min-w-0 overflow-hidden rounded-lg border border-hairline bg-surface">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-hairline px-4 py-2.5">
+        <h2 className="text-sm font-semibold text-foreground">
+          The Field at the cut
+          <span className="ml-2 font-mono text-xs font-normal tabular-nums text-secondary">
+            ${formatCompact(total)}
+          </span>
+        </h2>
+        <span className="shrink-0 text-[11px] uppercase tracking-wider text-muted">
+          open → cut
+        </span>
+      </div>
+      <ol className="m-0 list-none p-0">
+        {entries.map((e) => {
+          const outcome = outcomeOf(e.startRank, e.cutRank);
+          const delta = e.cutRank == null ? 0 : e.startRank - e.cutRank;
+          const dropped = e.cutRank != null && e.cutRank > entries.length;
+          // A token can fall off the board before the first sample of the round
+          // catches it, and "$0" would read as a token that stopped trading.
+          const volume = cutVolume.get(e.symbol);
+          return (
+            <li
+              key={e.symbol}
+              className="grid items-center gap-3 border-b border-hairline/60 px-4 py-2.5 last:border-b-0"
+              style={{ gridTemplateColumns: "24px 12px 28px minmax(0,1fr) 76px" }}
+            >
+              <span className="grid place-items-center font-mono text-lg tabular-nums leading-none text-muted">
+                {dropped ? "—" : (e.cutRank ?? "—")}
+              </span>
+              <span
+                aria-hidden="true"
+                className="text-xs"
+                style={{
+                  color: delta > 0 ? "var(--up)" : delta < 0 ? "var(--down)" : "transparent",
+                }}
+              >
+                {delta > 0 ? "▲" : delta < 0 ? "▼" : "•"}
+              </span>
+              <CoinIcon ticker={e.ticker} src={meta.get(e.symbol)?.imageUrl ?? null} size={28} />
+              <span className="min-w-0">
+                <span className="block truncate font-semibold text-foreground">
+                  {e.ticker}
+                  {e.cutRank === 1 && (
+                    <span title="Took the crown" className="ml-1.5">
+                      👑
+                    </span>
+                  )}
+                </span>
+                <span className="block truncate font-mono text-[11px] tabular-nums text-muted">
+                  rank {e.startRank} → {dropped ? "off the board" : (e.cutRank ?? "—")}
+                  {volume != null && ` · $${formatCompact(volume)}`}
+                  {e.isCrown && <span className="ml-1.5">· crowned at the open, no book</span>}
+                </span>
+              </span>
+              <span
+                className="justify-self-end rounded-md border px-2 py-1 text-center text-[10px] font-semibold uppercase tracking-wide"
+                style={{
+                  minWidth: 74,
+                  color: outcome ? TONE[outcome].color : "var(--text-muted)",
+                  borderColor: outcome
+                    ? `color-mix(in oklch, ${TONE[outcome].color} 35%, transparent)`
+                    : "var(--hairline)",
+                  backgroundColor: outcome
+                    ? `color-mix(in oklch, ${TONE[outcome].color} 7%, transparent)`
+                    : "transparent",
+                }}
+                title={outcome ? `${TONE[outcome].label} paid on ${e.ticker}` : "No cut recorded"}
+              >
+                {outcome ? TONE[outcome].label : "—"}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+/** How the round ended, whether its cut verifies, and what it paid the player. */
+function Resolution({
+  round,
+  bets,
+  meta,
+  cutVolume,
+}: {
+  round: Round;
+  bets: CryptoBet[];
+  meta: Map<string, Meta>;
+  cutVolume: Map<string, number>;
+}) {
+  const verdict = useRoundVerification(round);
+  const winner = round.entries.find((e) => e.cutRank === 1) ?? null;
+  const staked = bets.reduce((n, b) => n + b.stake, 0);
+  const returned = bets.reduce((n, b) => n + b.payout, 0);
+  const net = returned - staked;
+
+  return (
+    <div className="min-w-0 overflow-hidden rounded-lg border border-hairline bg-surface">
+      <div className="border-b border-hairline px-4 py-2.5">
+        <h2 className="text-sm font-semibold text-foreground">Resolution</h2>
+      </div>
+
+      <div className="flex items-center gap-3 border-b border-hairline px-4 py-3">
+        {winner ? (
+          <>
+            <CoinIcon
+              ticker={winner.ticker}
+              src={meta.get(winner.symbol)?.imageUrl ?? null}
+              size={32}
+            />
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-foreground">
+                {winner.ticker} <span className="font-normal text-muted">took the crown</span>
+              </div>
+              <div className="font-mono text-[11px] tabular-nums text-muted">
+                rank {winner.startRank} → 1 · ${formatCompact(cutVolume.get(winner.symbol) ?? 0)}
+              </div>
+            </div>
+          </>
+        ) : (
+          <span className="text-sm text-muted">No cut was recorded for this round.</span>
+        )}
+      </div>
+
+      <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 border-b border-hairline px-4 py-3 font-mono text-[11px] tabular-nums">
+        <dt className="text-muted">opened</dt>
+        <dd className="m-0 text-right text-secondary">{hhmm(round.startsAt)}</dd>
+        <dt className="text-muted">locked</dt>
+        <dd className="m-0 text-right text-secondary">{hhmm(round.lockAt)}</dd>
+        <dt className="text-muted">cut</dt>
+        <dd className="m-0 text-right text-secondary">
+          {round.cutAt ? hhmmss(round.cutAt) : "—"}
+        </dd>
+        <dt className="text-muted">commitment</dt>
+        <dd
+          className="m-0 truncate text-right"
+          title={
+            round.seed
+              ? `seed ${round.seed}\nsha256(seed) must equal ${round.commitHash}`
+              : "the seed is published once the round settles"
+          }
+          style={{
+            color:
+              verdict === "verified"
+                ? "var(--up)"
+                : verdict === "mismatch"
+                  ? "var(--down)"
+                  : "var(--text-muted)",
+          }}
+        >
+          {verdict === "pending"
+            ? "verifying…"
+            : verdict === "verified"
+              ? "verified ✓"
+              : "mismatch"}
+        </dd>
+      </dl>
+
+      <div className="px-4 py-3">
+        <div className="mb-1.5 text-[10px] uppercase tracking-wider text-muted">your round</div>
+        {bets.length ? (
+          <div className="flex items-baseline justify-between gap-2 font-mono text-xs tabular-nums">
+            <span className="text-muted">
+              {bets.length} {bets.length === 1 ? "position" : "positions"} · staked {staked}
+            </span>
+            <span
+              style={{
+                color: net > 0 ? "var(--up)" : net < 0 ? "var(--down)" : "var(--text-muted)",
+              }}
+              title={`returned ${returned} credits`}
+            >
+              {net > 0 ? "+" : ""}
+              {net}
+            </span>
+          </div>
+        ) : (
+          <p className="m-0 text-xs text-muted">You had no positions in this round.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Every lot the player took on this round, oldest first — the round as a log. */
+function TxLog({ bets, meta }: { bets: CryptoBet[]; meta: Map<string, Meta> }) {
+  const ordered = useMemo(
+    () =>
+      [...bets].sort(
+        (a, b) => new Date(a.openedAt).getTime() - new Date(b.openedAt).getTime()
+      ),
+    [bets]
+  );
+
+  return (
+    <div className="flex min-w-0 flex-col overflow-hidden">
+      <div className="flex items-baseline justify-between gap-2 px-1 pb-1">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">Tx log</h2>
+        <span className="shrink-0 text-[11px] text-muted">
+          {ordered.length ? `${ordered.length} filled` : "your bets"}
+        </span>
+      </div>
+      <ul className="m-0 max-h-[300px] min-w-0 list-none overflow-y-auto overflow-x-hidden p-0">
+        {ordered.map((b) => {
+          const tone = TONE[b.direction];
+          const pnl = b.payout - b.stake;
+          return (
+            <li
+              key={b.id}
+              className="grid w-full items-center gap-2 overflow-hidden border-b border-hairline/40 px-1 py-1.5 last:border-b-0"
+              style={{ gridTemplateColumns: "18px minmax(0,1fr) minmax(0,auto)" }}
+            >
+              <CoinIcon ticker={b.ticker} src={meta.get(b.symbol)?.imageUrl ?? null} size={18} />
+              <span className="min-w-0">
+                <span className="flex min-w-0 items-baseline gap-1.5">
+                  <span className="truncate font-mono text-xs font-semibold text-foreground">
+                    {b.ticker}
+                  </span>
+                  <span className="shrink-0 text-[11px]" style={{ color: tone.color }}>
+                    {tone.label}
+                  </span>
+                </span>
+                <span className="block truncate font-mono text-[10px] tabular-nums text-muted">
+                  {hhmmss(b.openedAt)} · {b.stake} @ {b.odds.toFixed(2)}x
+                </span>
+              </span>
+              <span className="min-w-0 text-right">
+                <span
+                  className="block font-mono text-xs tabular-nums"
+                  style={{
+                    color:
+                      b.status === "WON"
+                        ? "var(--up)"
+                        : b.status === "LOST"
+                          ? "var(--down)"
+                          : "var(--text-secondary)",
+                  }}
+                >
+                  {b.status === "OPEN" ? "—" : `${pnl > 0 ? "+" : ""}${pnl}`}
+                </span>
+                <span className="block font-mono text-[10px] text-muted">
+                  {STATUS[b.status] ?? b.status}
+                </span>
+              </span>
+            </li>
+          );
+        })}
+        {!ordered.length && (
+          <li className="px-4 py-6 text-center text-xs text-muted">
+            no positions on this round
+          </li>
+        )}
+      </ul>
+    </div>
+  );
+}

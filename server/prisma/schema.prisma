@@ -1,0 +1,234 @@
+// Prisma schema for the Casino GraphQL backend.
+// Real package metrics (npm downloads + jsDelivr CDN hits) are ingested and
+// persisted here; users/invite-codes/credits and the (simulated) prediction
+// bets are persisted too. The live tick price + orderbook are simulated on the
+// client and never stored.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum BetStatus {
+  OPEN
+  WON
+  LOST
+  CASHED_OUT
+  VOID // no decisive data point within 7 days of the round ending — stake refunded
+}
+
+/// Invite codes gate account creation (login = redeeming a code).
+model InviteCode {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  maxUses   Int      @default(1)
+  uses      Int      @default(0)
+  active    Boolean  @default(true)
+  note      String?
+  createdAt DateTime @default(now())
+
+  users User[]
+}
+
+/// A top-up: SOL paid on chain, credits granted here.
+///
+/// The signature is unique because it is the proof *and* the idempotency key.
+/// Crediting a balance from a client's say-so would be a mint button; crediting
+/// it from a transaction that can only be presented once is a purchase.
+model CreditPurchase {
+  id          String   @id @default(cuid())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  signature   String   @unique
+  lamports    BigInt
+  credits     Int
+  solPriceUsd Float
+  at          DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// A (pseudonymous) player account with a fake credit balance.
+model User {
+  id           String      @id @default(cuid())
+  handle       String      @unique
+  credits      Int         @default(1000)
+  /// A market-making desk rather than a person. Desks bet real credits through
+  /// the same path players use and their P&L persists across rounds, but they
+  /// hold no invite code and no session, so there is no route by which one
+  /// becomes reachable as a player. Everything player-facing filters on this.
+  isDesk       Boolean     @default(false)
+  inviteCode   InviteCode? @relation(fields: [inviteCodeId], references: [id])
+  inviteCodeId String?
+  /// The Solana wallet this player bets from, once they have completed the
+  /// on-chain setup. Null for everyone who has not, which is every player while
+  /// CHAIN_MODE is off and the desks always — a desk's keypair is derived from
+  /// its id and is not stored anywhere.
+  ///
+  /// Unique because a wallet is what the program settles a payout to. Two rows
+  /// pointing at one wallet would let two accounts spend the same on-chain
+  /// balance, each believing it was theirs.
+  walletAddress String?    @unique
+  createdAt    DateTime    @default(now())
+
+  sessions   Session[]
+  cryptoBets CryptoBet[]
+  purchases  CreditPurchase[]
+
+  @@index([isDesk])
+}
+
+/// A live sign-in.
+///
+/// `token` is sha256 of the opaque bearer token the client holds, never the
+/// token itself — see `hashToken` in src/auth.ts. The plaintext exists exactly
+/// once, in the response to `redeemInvite`, so a copy of this table lets nobody
+/// impersonate anybody. Expired rows are swept hourly (src/sessions.ts).
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Crypto volume-rank markets: ten solana majors compete on trailing-window traded
+// volume. A round asks, per coin, whether its rank at the cut is HIGHER, LOWER
+// or the same (DRAW) as its rank when the round opened.
+// ---------------------------------------------------------------------------
+
+enum RoundStatus {
+  OPEN // betting is live
+  LOCKED // betting closed; the cut has not landed yet
+  CUT // the cut instant passed and ranks were recorded; settling
+  SETTLED // seed revealed, bets paid
+}
+
+enum RankDirection {
+  HIGHER
+  DRAW
+  LOWER
+}
+
+/// One hour of competition.
+///
+/// The settlement instant ("the cut") is a random point inside the final
+/// minute, so a pump timed at a known deadline can't decide the outcome. It is
+/// committed up front: `commitHash` = sha256(seed) is published when the round
+/// opens, `seed` is revealed at settlement, and cutAt is derived from the seed,
+/// so anyone can verify the house didn't pick a convenient moment.
+model Round {
+  id               String      @id @default(cuid())
+  startsAt         DateTime    @unique
+  lockAt           DateTime // betting closes
+  endsAt           DateTime // lockAt + the cut window
+  commitHash       String // sha256(seed), published at open
+  seed             String? // revealed at settlement
+  cutAt            DateTime? // derived from seed; set when the cut lands
+  /// The coin wearing the crown for this round: whoever finished #1 at the
+  /// previous round's cut. It cannot be bet on — see rounds.ts.
+  crownSymbol      String?
+  /// The cut window this round actually used. Stored rather than read from env
+  /// at display time: the cut instant is derived as HMAC(seed, id) mod this
+  /// value, so a later config change would otherwise make settled rounds fail
+  /// their own verification.
+  cutWindowSeconds Int         @default(60)
+  status           RoundStatus @default(OPEN)
+  createdAt        DateTime    @default(now())
+
+  entries RoundEntry[]
+  bets    CryptoBet[]
+
+  @@index([status])
+}
+
+/// A coin's standing in one round: where it started, and where it was at the cut.
+model RoundEntry {
+  id          String @id @default(cuid())
+  round       Round  @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  roundId     String
+  symbol      String
+  ticker      String
+  startRank   Int
+  startVolume Float
+  cutRank     Int?
+  cutVolume   Float?
+
+  @@unique([roundId, symbol])
+}
+
+/// A three-way bet on one coin's rank movement over a round.
+model CryptoBet {
+  id         String        @id @default(cuid())
+  /// The position account this bet lives in on-chain, when it was placed there.
+  ///
+  /// Null for every bet placed through the Postgres path. Where it is set the
+  /// program holds the money and this row is an index: the stake, the price and
+  /// the outcome are all readable from the account, and this row exists so the
+  /// tape, the history and the round replay keep working unchanged.
+  ///
+  /// Unique because one account is one position. Two rows pointing at it would
+  /// be two records of one bet, and settlement would pay one and strand the
+  /// other.
+  chainAddress String?     @unique
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String
+  round      Round         @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  roundId    String
+  symbol     String
+  ticker     String
+  direction  RankDirection
+  stake      Int
+  odds       Float // decimal multiplier locked at bet time
+  startRank  Int
+  status     BetStatus     @default(OPEN)
+  cutRank    Int?
+  payout     Int           @default(0)
+  openedAt   DateTime      @default(now())
+  resolvedAt DateTime?
+
+  @@index([userId, status])
+  @@index([roundId])
+}
+
+/// A token's display identity: what to call it and which mark to draw.
+///
+/// The oracle only ever holds the *current* trending pool in memory, so once a
+/// token drops out of it there is nowhere left holding its logo — which made
+/// old rounds replay as lettered discs, and put gaps in the live flow feed
+/// whenever a mover had since fallen off the pool. Written whenever the upstream
+/// reports something we haven't already stored, so it's one row per token ever
+/// seen and almost never a write.
+model Token {
+  symbol    String   @id
+  name      String
+  imageUrl  String?
+  updatedAt DateTime @updatedAt
+}
+
+/// One token's standing at one instant.
+///
+/// The oracle keeps a rolling window in memory for speed, but that dies with the
+/// process — so a restart mid-round used to leave the chart starting from
+/// whenever the server came back rather than from the round's open. Written only
+/// when the upstream publishes new numbers, so this is roughly one row per token
+/// per minute.
+model RankSample {
+  id     String   @id @default(cuid())
+  at     DateTime
+  symbol String
+  rank   Int
+  volume Float
+
+  @@unique([at, symbol])
+  @@index([at])
+}
