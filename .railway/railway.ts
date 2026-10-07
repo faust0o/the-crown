@@ -19,7 +19,7 @@ export default defineRailway(() => {
   });
   // Token logos (server/src/logo-store.ts). A volume means each redeploy has a
   // few seconds of downtime: Railway will not run two deployments on one volume.
-  const serverData = volume("server-data", { region: "us-west2" });
+  const serverData = volume("server-data", { region: "us-west2", sizeMB: 50000 });
   const TheCrownServer = service("The Crown Server", {
     source: github("faust0o/the-crown", { branch: "main" }),
     build: "bun run build",
