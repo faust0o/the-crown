@@ -141,9 +141,12 @@ const chain =
  * and the UI polls, so these are a ceiling on abuse rather than a throttle
  * anyone playing normally will meet.
  *
- * `redeemInvite` is the strict one. It is the only unauthenticated write, it
- * creates rows, and it is the single gate on the whole product, so it is the one
- * field where the cost of guessing has to stay high.
+ * The two wallet sign-in fields are the strict ones. They are the only
+ * unauthenticated writes, one of them creates rows, and together they are the
+ * single gate on the whole product — so they are where the cost of hammering
+ * has to stay high. `walletChallenge` is the looser of the pair because it is
+ * the retry path: a rejected wallet prompt, a switched account or an expired
+ * nonce all send an honest player back through it.
  */
 export const guards: IMiddlewareTypeMap<unknown, Context, Args> = {
   Query: {

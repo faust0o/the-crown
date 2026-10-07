@@ -8,7 +8,6 @@
     "typecheck": "tsc --noEmit",
     "test": "node --env-file-if-exists=.env --import tsx --test src/*.test.ts src/*/*.test.ts",
     "nexus:reflect": "NEXUS_REFLECT=true node --import tsx src/schema/reflect.ts",
-    "invites:mint": "node --env-file-if-exists=.env --import tsx src/mint-invites.ts",
     "prisma:generate": "prisma generate",
     "migrate": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",

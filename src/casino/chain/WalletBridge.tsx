@@ -86,9 +86,8 @@ function describe(err: unknown): string {
  * Solana for the casino: an RPC connection, a wallet, and the program state
  * that hangs off the pair.
  *
- * Wraps the whole app. The invite code is still what creates an
- * account — this is a second, independent identity that a player may or may not
- * attach, and nothing below assumes both are present.
+ * Wraps the whole app, and everything else inside it — the session included,
+ * because a session here is a signature by the wallet this provides.
  */
 export function WalletBridge({ children }: { children: ReactNode }) {
   const [connectError, setConnectError] = useState<string | null>(null);

@@ -9,14 +9,6 @@ import { getToken } from "../../apollo";
  * difference between a client and a fetch is nothing but the client.
  */
 
-export interface PreparedSetup {
-  /** Base64 of a transaction already carrying the relayer's signature. */
-  transaction: string;
-  blockhash: string;
-  lastValidBlockHeight: number;
-  relayer: string;
-}
-
 /** The same endpoint `src/apollo.ts` uses, resolved the same way. */
 const GRAPHQL_URL: string = import.meta.env.VITE_GRAPHQL_URL ?? "/graphql";
 
@@ -53,8 +45,8 @@ async function callGraphQL<T>(query: string, variables: Record<string, unknown>)
 }
 
 const PREPARE = `
-  mutation PrepareCreditPurchase($lamports: String!) {
-    prepareCreditPurchase(lamports: $lamports) {
+  mutation PrepareCreditPurchase($lamports: String!, $owner: String!) {
+    prepareCreditPurchase(lamports: $lamports, owner: $owner) {
       transaction
       blockhash
       lastValidBlockHeight
@@ -91,9 +83,21 @@ export interface PreparedPurchase {
  * gets signed, because they must not be able to disagree: a quote from one code
  * path and a transaction from another is how somebody ends up approving a number
  * they were never shown.
+ *
+ * The owner is the connected wallet, sent with the call so the server can check
+ * it against the one the account signed in with. It has to be sent rather than
+ * only looked up: the transaction is built for a specific payer, and the page is
+ * where the wallet actually in front of the player is known — a mismatch is a
+ * refusal, not a silently different transaction.
  */
-export async function prepareCreditPurchase(lamports: string): Promise<PreparedPurchase> {
-  const data = await callGraphQL<{ prepareCreditPurchase: PreparedPurchase }>(PREPARE, { lamports });
+export async function prepareCreditPurchase(
+  lamports: string,
+  owner: string
+): Promise<PreparedPurchase> {
+  const data = await callGraphQL<{ prepareCreditPurchase: PreparedPurchase }>(PREPARE, {
+    lamports,
+    owner,
+  });
   return data.prepareCreditPurchase;
 }
 

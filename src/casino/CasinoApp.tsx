@@ -8,10 +8,10 @@ import CrownPage from "./crypto/CryptoPage";
  * markets this used to sit beside are gone, and so is the landing page it was
  * lazy-loaded from when it lived on utopiancontributors.com/casino.
  *
- * WalletBridge sits outside the Apollo provider because the two identities are
- * independent: the invite code is what creates an account and holds credits, and
- * the wallet is an optional second one that removes the prompt from every bet.
- * Neither provider needs anything from the other.
+ * WalletBridge sits outside the Apollo provider because signing in needs both:
+ * the session is a signature by the connected wallet, so `SessionProvider` —
+ * which lives inside Apollo — has to be able to reach the adapter. Wrapping the
+ * whole tree is what puts it in that order.
  */
 export default function CasinoApp() {
   return (

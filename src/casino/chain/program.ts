@@ -123,8 +123,6 @@ export function decodeDelegation(data: Uint8Array): Delegation | null {
 interface ViteEnv {
   VITE_SOLANA_RPC_URL?: string;
   VITE_SOLANA_CLUSTER?: string;
-  VITE_CROWN_CREDIT_MINT?: string;
-  VITE_CROWN_RELAYER?: string;
 }
 const viteEnv = (): ViteEnv =>
   (import.meta as unknown as { env?: ViteEnv }).env ?? {};
@@ -211,58 +209,8 @@ export function explorerUrl(address: string): string {
   return `${base}?cluster=${CLUSTER}`;
 }
 
-function parseKey(raw: string | undefined): PublicKey | null {
-  if (!raw) return null;
-  try {
-    return new PublicKey(raw.trim());
-  } catch {
-    return null;
-  }
-}
-
-const RAW_CREDIT_MINT: string | undefined = viteEnv().VITE_CROWN_CREDIT_MINT;
-const RAW_RELAYER: string | undefined = viteEnv().VITE_CROWN_RELAYER;
-
-/** The SPL mint credits are denominated in — `config.credit_mint` on chain. */
-export const CREDIT_MINT = parseKey(RAW_CREDIT_MINT);
-/** The key the server signs relayed bets with, and the only one a player names. */
-export const RELAYER = parseKey(RAW_RELAYER);
-
-/**
- * Why the on-chain half is unavailable, or null if it is configured.
- *
- * Both addresses are deployment facts the client cannot derive, and a build
- * missing either can still connect a wallet and show balances — it just cannot
- * complete setup. Saying so beats a wallet prompt that fails at simulation.
- */
-export const CHAIN_CONFIG_ERROR: string | null = (() => {
-  const bad: string[] = [];
-  if (!CREDIT_MINT) bad.push("VITE_CROWN_CREDIT_MINT");
-  if (!RELAYER) bad.push("VITE_CROWN_RELAYER");
-  if (!bad.length) return null;
-  return bad.length > 1
-    ? `${bad.join(" and ")} are unset or aren't valid addresses.`
-    : `${bad[0]} is unset or isn't a valid address.`;
-})();
-
 /** `7xKX…p2aB`. Addresses are unreadable in a proportional font, so: font-mono. */
 export function shortAddress(address: string, chars = 4): string {
   if (address.length <= chars * 2 + 1) return address;
   return `${address.slice(0, chars)}…${address.slice(-chars)}`;
-}
-
-/**
- * Base units to display units.
- *
- * Kept as a number: credit balances are small enough that the double holds them
- * exactly, and every consumer is a formatter. Anything that has to be exact —
- * the allowance written into an approval — stays a bigint all the way down.
- */
-export function uiAmount(raw: bigint, decimals: number): number {
-  return Number(raw) / 10 ** decimals;
-}
-
-/** Display units to base units, rounded rather than truncated toward zero. */
-export function baseAmount(ui: number, decimals: number): bigint {
-  return BigInt(Math.round(ui * 10 ** decimals));
 }

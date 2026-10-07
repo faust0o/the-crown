@@ -29,9 +29,11 @@ root `bun install` does not reach it — and the Prisma client it imports is
 generated, not committed. `server:prepare` covers both; run it again after
 changing `server/prisma/schema.prisma` or `server/package.json`.
 
-**Login is invite-only.** Codes are minted at boot by `server/src/invites.ts`
-and printed to the log in development, each single-use. In production nothing
-prints them — mint deliberately with `cd server && bun run invites:mint`.
+**Login is your wallet.** Connect Phantom or Solflare and sign the sentence the
+server hands back — `walletChallenge` issues a single-use nonce,
+`walletLogin` checks the signature (`server/src/wallet-auth.ts`) and finds or
+creates the account behind that address. Nothing is minted, nothing is
+registered, and there is no code to have been given.
 
 ## Build and serve
 
@@ -58,8 +60,8 @@ pending, and a container that cannot do both refuses to start rather than
 opening a book against a schema it does not understand.
 
 Set `NODE_ENV=production` on the deploy. It is what enables HSTS, disables
-GraphQL introspection, the Apollo landing page and stack traces in errors, and
-stops invite codes being written to the log. See `server/.env.example`.
+GraphQL introspection, the Apollo landing page and stack traces in errors. See
+`server/.env.example`.
 
 Set `SITE_ORIGIN=https://thecrowngame.fun` when building, so the link-preview
 card resolves to an absolute URL. Set `CLIENT_DIR` to serve a build from
@@ -93,7 +95,7 @@ multiply their selection.
 Two properties worth not breaking:
 
 - **Session tokens are stored as sha256, never in the clear** (`auth.ts`). The
-  plaintext exists once, in the reply to `redeemInvite`.
+  plaintext exists once, in the reply to `walletLogin`.
 - **`/logo` will not connect to a private address.** The check is in the
   dispatcher's DNS lookup (`logo-proxy.ts`), so it covers every redirect hop and
   leaves no rebinding window — and it does not rewrite the URL to an IP, which

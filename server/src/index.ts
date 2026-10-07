@@ -223,18 +223,6 @@ async function main() {
       console.warn("⚠  oracle failed to start:", err?.message ?? err);
     });
 
-  // Invite codes are the only way in, so the server must always hold some.
-  try {
-    const codes = await seedInviteCodes();
-    if (LOG_INVITE_CODES) {
-      console.log(`🎟   Invite codes (${codes.length} unused): ${codes.join("  ")}`);
-    } else {
-      console.log(`🎟   ${codes.length} unused invite code(s) in circulation.`);
-    }
-  } catch (err) {
-    console.warn("⚠  could not seed invite codes:", err instanceof Error ? err.message : err);
-  }
-
   console.log(`👑  The Crown API ready at http://localhost:${PORT}/graphql`);
   if (hasClientBuild()) {
     console.log(`🌐  Website ready at http://localhost:${PORT}/`);

@@ -6,7 +6,24 @@ export const User = objectType({
     t.nonNull.id("id");
     t.nonNull.string("handle");
     t.nonNull.int("credits");
+    /**
+     * The wallet this account signs in with.
+     *
+     * Only ever the caller's own — `User` is returned by `me` and by the
+     * sign-in payload and nowhere else. The page needs it to notice when the
+     * wallet in front of the player stops being the one the session belongs to.
+     */
+    t.string("walletAddress");
     t.nonNull.field("createdAt", { type: "DateTime" });
+  },
+});
+
+/** A nonce to sign, and the exact sentence the wallet will show. */
+export const WalletChallenge = objectType({
+  name: "WalletChallenge",
+  definition(t) {
+    t.nonNull.string("nonce");
+    t.nonNull.string("message");
   },
 });
 

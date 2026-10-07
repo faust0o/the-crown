@@ -50,7 +50,7 @@ describe("field guards", () => {
 
   it("allows exactly `max` calls in a window, then refuses", async () => {
     const guard = limit(3, 60_000);
-    const info = infoFor("Mutation", "redeemInvite");
+    const info = infoFor("Mutation", "walletLogin");
     const ctx = ctxFor(null);
 
     for (let i = 0; i < 3; i++) assert.equal(await call(guard, ctx, info), "ok");
@@ -59,7 +59,7 @@ describe("field guards", () => {
 
   it("tells the caller how long to wait", async () => {
     const guard = limit(1, 60_000);
-    const info = infoFor("Mutation", "redeemInvite");
+    const info = infoFor("Mutation", "walletLogin");
     await call(guard, ctxFor(null), info);
     await assert.rejects(
       () => call(guard, ctxFor(null), info),
@@ -101,7 +101,7 @@ describe("field guards", () => {
 
   it("forgets a window once it has passed", async () => {
     const guard = limit(1, 1);
-    const info = infoFor("Mutation", "redeemInvite");
+    const info = infoFor("Mutation", "walletLogin");
     await call(guard, ctxFor(null), info);
     await new Promise((r) => setTimeout(r, 5));
     assert.equal(await call(guard, ctxFor(null), info), "ok");
@@ -146,14 +146,17 @@ describe("the served schema carries its guards", () => {
     assert.equal(result.errors?.[0]?.extensions?.code, "UNAUTHENTICATED");
   });
 
-  it("rate-limits redeemInvite without ever reaching the database", async () => {
+  it("rate-limits walletLogin without ever reaching the database", async () => {
     const ctx = ctxFor(null);
-    const source = 'mutation { redeemInvite(code: "CROWN-XXXXXX") { token } }';
+    const source =
+      'mutation { walletLogin(address: "11111111111111111111111111111111", ' +
+      'nonce: "deadbeef", signature: "AA==") { token } }';
 
-    // The budget is 5 per ten minutes. The first five reach the resolver — and
-    // the resolver reaches the database, which is what `forbiddenPrisma`
-    // reports — but the sixth must be refused by the guard before it does.
-    for (let i = 0; i < 5; i++) await run(source, ctx);
+    // The budget is 10 per ten minutes. The first ten are refused by the
+    // resolver — a nonce nobody issued — but they get that far; the eleventh
+    // must be stopped by the guard, and either way `forbiddenPrisma` reports if
+    // one of them ever reached the database.
+    for (let i = 0; i < 10; i++) await run(source, ctx);
 
     const refused = await run(source, ctx);
     assert.equal(refused.errors?.[0]?.extensions?.code, "RATE_LIMITED");

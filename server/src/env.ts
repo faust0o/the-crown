@@ -28,17 +28,6 @@ export const HAS_DATABASE_URL = Boolean(process.env.DATABASE_URL);
 export const TRUST_PROXY = Number(process.env.TRUST_PROXY ?? (IS_PRODUCTION ? 1 : 0));
 
 /**
- * Print freshly seeded invite codes to the log at boot.
- *
- * On by default in development, where the log is the only way in. Off in
- * production, where the log is a retained, searchable artefact that anyone with
- * dashboard access can read — and these codes are the entire authentication
- * system. Mint them deliberately with `bun run invites:mint` instead.
- */
-export const LOG_INVITE_CODES =
-  (process.env.LOG_INVITE_CODES ?? String(!IS_PRODUCTION)) === "true";
-
-/**
  * Whether the chain half of the game runs: `on` or `off`.
  *
  * Off by default, and that default is the point. The database game works and has

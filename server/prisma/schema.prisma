@@ -1,8 +1,8 @@
 // Prisma schema for the Casino GraphQL backend.
 // Real package metrics (npm downloads + jsDelivr CDN hits) are ingested and
-// persisted here; users/invite-codes/credits and the (simulated) prediction
-// bets are persisted too. The live tick price + orderbook are simulated on the
-// client and never stored.
+// persisted here; users/credits and the (simulated) prediction bets are
+// persisted too. The live tick price + orderbook are simulated on the client
+// and never stored.
 
 generator client {
   provider = "prisma-client-js"
@@ -20,19 +20,6 @@ enum BetStatus {
   LOST
   CASHED_OUT
   VOID // no decisive data point within 7 days of the round ending — stake refunded
-}
-
-/// Invite codes gate account creation (login = redeeming a code).
-model InviteCode {
-  id        String   @id @default(cuid())
-  code      String   @unique
-  maxUses   Int      @default(1)
-  uses      Int      @default(0)
-  active    Boolean  @default(true)
-  note      String?
-  createdAt DateTime @default(now())
-
-  users User[]
 }
 
 /// A top-up: SOL paid on chain, credits granted here.
@@ -58,21 +45,24 @@ model User {
   id           String      @id @default(cuid())
   handle       String      @unique
   credits      Int         @default(1000)
-  /// A market-making desk rather than a person. Desks bet real credits through
-  /// the same path players use and their P&L persists across rounds, but they
-  /// hold no invite code and no session, so there is no route by which one
-  /// becomes reachable as a player. Everything player-facing filters on this.
-  isDesk       Boolean     @default(false)
-  inviteCode   InviteCode? @relation(fields: [inviteCodeId], references: [id])
-  inviteCodeId String?
-  /// The Solana wallet this player bets from, once they have completed the
-  /// on-chain setup. Null for everyone who has not, which is every player while
-  /// CHAIN_MODE is off and the desks always — a desk's keypair is derived from
-  /// its id and is not stored anywhere.
+  /// A retired market-making desk rather than a person.
   ///
-  /// Unique because a wallet is what the program settles a payout to. Two rows
-  /// pointing at one wallet would let two accounts spend the same on-chain
-  /// balance, each believing it was theirs.
+  /// Nothing sets this any more. The desks were removed when the board became
+  /// player-priced, and the column stays because their accounts still stand
+  /// behind the bets they placed in rounds that have already settled — dropping
+  /// it would either orphan those rows or rewrite history to say a person made
+  /// them. Everything player-facing still filters on it, so a desk account can
+  /// never surface as a player or in the orders feed.
+  isDesk       Boolean     @default(false)
+  /// The Solana wallet this account signs in with, and the only thing that can.
+  ///
+  /// Nullable because the retired desks have none, and neither do the accounts
+  /// that predate wallet login — they exist behind their settled bets and can
+  /// no longer be signed into.
+  ///
+  /// Unique because it is the identity: two rows pointing at one wallet would be
+  /// two accounts for one player, and a payout would reach whichever the login
+  /// happened to find.
   walletAddress String?    @unique
   createdAt    DateTime    @default(now())
 
@@ -87,7 +77,7 @@ model User {
 ///
 /// `token` is sha256 of the opaque bearer token the client holds, never the
 /// token itself — see `hashToken` in src/auth.ts. The plaintext exists exactly
-/// once, in the response to `redeemInvite`, so a copy of this table lets nobody
+/// once, in the response to `walletLogin`, so a copy of this table lets nobody
 /// impersonate anybody. Expired rows are swept hourly (src/sessions.ts).
 model Session {
   id        String   @id @default(cuid())

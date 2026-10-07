@@ -17,29 +17,55 @@ function badInput(message: string): GraphQLError {
 /** Credits a fresh account is seeded with. */
 const STARTING_CREDITS = 1000;
 
-function isUniqueViolation(err: unknown): boolean {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    (err as { code?: string }).code === "P2002"
-  );
+/**
+ * Which unique index a Prisma P2002 was about.
+ *
+ * Two of them can fire on the same insert here and they mean opposite things: a
+ * clash on `handle` is a coincidence to redraw past, a clash on `walletAddress`
+ * means somebody else's request already made this player's account and ours
+ * should return theirs. Treating them alike would either loop forever or hand
+ * back a duplicate row.
+ */
+function uniqueViolationOn(err: unknown): string[] | null {
+  if (typeof err !== "object" || err === null) return null;
+  const e = err as { code?: string; meta?: { target?: unknown } };
+  if (e.code !== "P2002") return null;
+  const target = e.meta?.target;
+  return Array.isArray(target) ? target.map(String) : [];
 }
 
-async function createUniqueUser(prisma: PrismaClient, inviteCodeId: string) {
+/**
+ * The account behind a wallet, made on first sign-in.
+ *
+ * There is no registration step: the wallet is the identity, so proving it is
+ * the whole of signing up. Everyone starts with the same play balance.
+ */
+async function userForWallet(prisma: PrismaClient, walletAddress: string) {
+  const existing = await prisma.user.findUnique({ where: { walletAddress } });
+  if (existing) return existing;
+
   for (let attempt = 0; attempt < 6; attempt++) {
     try {
       return await prisma.user.create({
-        data: { handle: newHandle(), inviteCodeId, credits: STARTING_CREDITS },
+        data: { handle: newHandle(), walletAddress, credits: STARTING_CREDITS },
       });
     } catch (err) {
-      if (isUniqueViolation(err)) continue;
-      throw err;
+      const target = uniqueViolationOn(err);
+      if (!target) throw err;
+      if (target.includes("walletAddress")) {
+        // A concurrent sign-in from the same wallet won the insert. Its row is
+        // the account — there is only ever one per wallet.
+        const raced = await prisma.user.findUnique({ where: { walletAddress } });
+        if (raced) return raced;
+        throw err;
+      }
+      // Handle collision: redraw.
     }
   }
   return prisma.user.create({
     data: {
       handle: `${newHandle()}-${Math.floor(Date.now() % 100000)}`,
-      inviteCodeId,
+      walletAddress,
       credits: STARTING_CREDITS,
     },
   });
@@ -49,31 +75,60 @@ export const mutations = extendType({
   type: "Mutation",
   definition(t) {
     // --- auth ---
-    t.nonNull.field("redeemInvite", {
+
+    /**
+     * Step one of signing in: a nonce to sign.
+     *
+     * Wallet addresses are public, so naming one proves nothing. What proves
+     * ownership is a signature over something the server picked — which is what
+     * this hands out. The message comes back rendered rather than assembled by
+     * the client, so what the wallet displays is exactly what gets verified.
+     */
+    t.nonNull.field("walletChallenge", {
+      type: "WalletChallenge",
+      args: { address: nonNull(stringArg()) },
+      resolve: (_root, args) => {
+        let address: string;
+        try {
+          address = normaliseAddress(args.address);
+        } catch (err) {
+          throw badInput(err instanceof Error ? err.message : "That is not a wallet address.");
+        }
+        return issueChallenge(address);
+      },
+    });
+
+    /**
+     * Step two: the signature, and a session if it checks out.
+     *
+     * The account is found or made from the wallet itself — there is no
+     * registration, because there is nothing left to register. A wallet that has
+     * never been here gets an account with a starting balance the first time it
+     * signs in.
+     */
+    t.nonNull.field("walletLogin", {
       type: "AuthPayload",
-      args: { code: nonNull(stringArg()) },
-      resolve: async (_root, { code }, ctx) => {
-        // Bounded before it reaches the index: `code` is caller-controlled and
-        // unauthenticated, and a megabyte of it is a megabyte of hashing on
-        // every attempt. No real code is anywhere near this long.
-        const normalised = code.trim().toUpperCase();
-        if (normalised.length > 64) throw badInput("Invalid or exhausted invite code.");
+      args: {
+        address: nonNull(stringArg()),
+        nonce: nonNull(stringArg()),
+        signature: nonNull(stringArg()),
+      },
+      resolve: async (_root, args, ctx) => {
+        // Bounded before any work: all three are caller-controlled and
+        // unauthenticated, and none has a legitimate form anywhere near this
+        // long. A real signature is 88 base64 characters.
+        if (args.nonce.length > 128 || args.signature.length > 256) {
+          throw badInput("That sign-in request could not be read.");
+        }
+        let address: string;
+        try {
+          address = normaliseAddress(args.address);
+          verifyChallenge(address, args.nonce, args.signature);
+        } catch (err) {
+          throw badInput(err instanceof Error ? err.message : "Could not verify that wallet.");
+        }
 
-        const invite = await ctx.prisma.inviteCode.findUnique({
-          where: { code: normalised },
-        });
-        if (!invite) throw badInput("Invalid or exhausted invite code.");
-
-        // Claim the use *before* creating the account, conditional on there
-        // still being one left. Checking and then incrementing lets two
-        // concurrent redeems of a single-use code both pass the check.
-        const claimed = await ctx.prisma.inviteCode.updateMany({
-          where: { id: invite.id, active: true, uses: { lt: invite.maxUses } },
-          data: { uses: { increment: 1 } },
-        });
-        if (claimed.count !== 1) throw badInput("Invalid or exhausted invite code.");
-
-        const user = await createUniqueUser(ctx.prisma, invite.id);
+        const user = await userForWallet(ctx.prisma, address);
 
         // The token is returned here and never again: the row holds its hash, so
         // this is the only moment the plaintext exists server-side.
@@ -193,13 +248,23 @@ export const mutations = extendType({
      */
     t.nonNull.field("prepareCreditPurchase", {
       type: "PreparedPurchase",
-      args: { lamports: nonNull(stringArg()) },
+      args: { lamports: nonNull(stringArg()), owner: nonNull(stringArg()) },
       resolve: async (_root, args, ctx) => {
-        const player = await ctx.prisma.user.findUnique({
+        // The payer must be the wallet the account signed in with. It was an
+        // open argument back when a wallet was only a payment method and an
+        // account was made by an invite code — the two could legitimately
+        // differ. They cannot now: the wallet *is* the account, so a purchase
+        // prepared for some other one is either a mistake or a stranger's
+        // transaction, and neither is worth building.
+        const account = await ctx.prisma.user.findUnique({
           where: { id: callerId(ctx) },
           select: { walletAddress: true },
         });
-        if (!player?.walletAddress) throw badInput("Connect a wallet first.");
+        if (!account?.walletAddress) throw badInput("Sign in with a wallet first.");
+        if (args.owner !== account.walletAddress) {
+          throw badInput("That is not the wallet this account signed in with.");
+        }
+
         let lamports: bigint;
         try {
           lamports = BigInt(args.lamports);
@@ -208,7 +273,7 @@ export const mutations = extendType({
         }
         if (lamports <= 0n) throw badInput("Enter an amount above zero.");
         try {
-          return await prepareCreditPurchase({ owner: player.walletAddress, lamports });
+          return await prepareCreditPurchase({ owner: args.owner, lamports });
         } catch (err) {
           throw badInput(err instanceof Error ? err.message : "Could not prepare that purchase.");
         }
