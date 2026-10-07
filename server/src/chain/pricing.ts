@@ -6,7 +6,7 @@
  * charges them must be the same number.** The board quotes off this; `place_bet`
  * charges off the Rust. If the two disagreed by a cent, every bet would be a
  * small lie, and the disagreement would show up as random slippage failures on
- * the desks' orders rather than as anything legible.
+ * orders rather than as anything legible.
  *
  * So this does not use `Math.log`. It cannot: `market.ts` used to, and the
  * original `averageMark` loses most of its significant digits to catastrophic
@@ -232,55 +232,6 @@ export function remark(book: Book): [number, number, number] {
 
   open.forEach((d, i) => (out[d] = Number(bounded[i])));
   return out;
-}
-
-/**
- * How many credits it takes to move a leg's mark `fraction` of the way from
- * where it is to `fairCents`.
- *
- * The pricing rule run backwards. `m = target · (held + x) / (pool + x)` solves to
- *
- * ```text
- *     x = (m·pool - target·held) / (target - m)
- * ```
- *
- * which is what lets a desk trade *to a price* rather than trade a size and hope.
- * Sizing a clip as a slice of bankroll says nothing about how wrong the price
- * currently is, so a line twenty cents adrift got the same clip as one already
- * right — and a coin that had demonstrably climbed could sit at a third of its
- * worth all round because the arithmetic that set the clip had never looked at
- * the mark.
- *
- * Takes a fraction rather than a target price on purpose. A caller working from
- * the quoted mark is working from an integer that has already been rounded and
- * largest-remaindered, and a target derived from it lands on the wrong side of
- * the true pool share about half the time — asking for a move the book has
- * already made, which solves to zero credits. Everything here is computed from
- * the unrounded share instead.
- *
- * Unlike the rest of this module the arithmetic is `number`, not `bigint`: it
- * sizes an *intention*, and the credits it returns are then floored and clamped
- * by the caller before anything is spent. Nothing here decides a price.
- */
-export function creditsToClose(
-  book: Book,
-  direction: Direction,
-  fairCents: number,
-  fraction: number
-): number {
-  const pool = Number(poolOf(book));
-  const target = book.target;
-  if (!(pool > 0) || !(target > 0) || !book.quoted[direction]) return 0;
-
-  const held = Number(book.staked[direction]);
-  const now = (target * held) / pool;
-  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-  const wanted = now + (clamp(fairCents, 0, target) - now) * clamp(fraction, 0, 1);
-  // A leg cannot own the whole book, and the solve divides by what is left of it.
-  const m = clamp(wanted, 0, target - 1);
-  if (!(m > now)) return 0; // already there, or past it — nothing to buy
-
-  return Math.max(0, (m * pool - target * held) / (target - m));
 }
 
 /**

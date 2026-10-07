@@ -44,8 +44,10 @@ per request. Changing one requires a rebuild, not a restart.
 |---|---|
 | `VITE_SOLANA_RPC_URL` | `/rpc` — always. See below. |
 | `VITE_SOLANA_CLUSTER` | `devnet` / `mainnet` / `testnet` / `local`, for explorer links. |
-| `VITE_CROWN_CREDIT_MINT` | The mint, so the client can find a player's token account. |
-| `VITE_CROWN_RELAYER` | The relayer the player approves. |
+
+The mint and the relayer are deliberately *not* build-time settings. The client
+learns both from the setup transaction the server hands it, so a redeploy that
+moves either needs no rebuild and the two cannot disagree.
 
 **`VITE_SOLANA_RPC_URL` must stay `/rpc`.** Setting it to a provider URL puts
 that URL — key and all — into `dist/assets/*.js`, readable by anyone who opens
@@ -107,12 +109,7 @@ the delegation account created during setup proves the *wallet holder* set it
 up, which is a fact about them and not about who is asking.
 
 Without it, any logged-in account could claim any wallet that had completed
-setup, including a market-making desk's: desk pubkeys are public, every desk has
-a delegation and a bankroll, and the relayer is its delegate. Desk pubkeys are
-also refused outright, because their keys derive from `DESK_SECRET` — a
-deployment that leaves it unset has published them with the source.
-
-**Set `DESK_SECRET` in production.**
+setup — the setup is public, and it says nothing about who is asking.
 
 ## Two ledgers, one balance
 
@@ -141,13 +138,15 @@ of a published figure. Everything downstream is sized to fit inside it:
 | variable | default | why |
 |---|---|---|
 | `SOLANA_MAX_RPS` | 3 | headroom under where refusals start |
-| `DESK_ARRIVAL_MS` | 3000 | a fill costs 3–4 requests between reading, sending and confirming |
-| `CHAIN_SETTLE_IDLE` | 5 | settlement gets what the tape is not using |
+| `CHAIN_SETTLE_LIVE` | 2 | settlement yields while a round is open |
+| `CHAIN_SETTLE_IDLE` | 5 | and catches up once nothing is live |
 
 At those settings a 180-second run produced **0 rate-limit errors, 0 warnings,
 50 fills and every round paid out**. At the previous settings the same run
 produced 71 refusals and *fewer* fills, because above the ceiling the retries
-become load themselves.
+become load themselves. Those numbers were measured while the market-making
+desks were the only thing betting on chain; nothing bets on chain now, so the
+ceiling is headroom rather than a constraint until a player path exists.
 
 **After upgrading the plan, re-run the ramp and raise these together.** Raising
 `SOLANA_MAX_RPS` alone just moves the refusals somewhere less visible.

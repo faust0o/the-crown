@@ -2,18 +2,16 @@ import type { CryptoBet, PrismaClient, Round, RoundEntry } from "./generated/pri
 import { fillCents, marketLines, type Direction } from "./market";
 
 /**
- * Placing a bet — the one path, used by players and desks alike.
+ * Placing a bet — the one path into the book.
  *
- * The desks bet real credits out of real accounts now, and the only way that is
- * honest is if they go through exactly what a player goes through: the same
- * checks, the same quote off the same tape, the same atomic debit. Anything the
- * desks got to skip would be a thumb on the scale, and anything a player is
- * refused for the desks must be refused for too.
+ * Every credit that has ever moved a price on this board came through here. The
+ * checks, the quote and the debit are one unit and stay one unit: a caller that
+ * could take any of them separately could bet money it does not have, or bet it
+ * at a price the book never offered.
  *
  * Refusals come back as values rather than exceptions. The mutation turns them
- * into messages; a desk that cannot afford a clip simply does not place one, and
- * needs that to be an ordinary Tuesday rather than a thrown error inside a
- * timer.
+ * into messages, and a refusal is an ordinary answer rather than a failure —
+ * "not enough credits" is a thing a player does several times an evening.
  */
 
 export type RoundWithEntries = Round & { entries: RoundEntry[] };
@@ -85,8 +83,7 @@ export async function placeBet({
   }
 
   // Debit inside the transaction and only if the balance actually covers it, so
-  // two concurrent bets can't both spend the same credits — and so a desk can
-  // never bet itself negative no matter how its ramp sized the clip.
+  // two concurrent bets can't both spend the same credits.
   const bet = await prisma.$transaction(async (tx) => {
     const debited = await tx.user.updateMany({
       where: { id: userId, credits: { gte: stake } },

@@ -178,8 +178,6 @@ export const mutations = extendType({
 
         const round = await currentRound();
         if (!round) throw badInput("No round is open yet — the oracle is still warming up.");
-        // The same call the desks make. Whatever a player is refused for, a desk
-        // is refused for, and at the identical quote.
         const placed = await placeBet({
           prisma: ctx.prisma,
           userId,
@@ -190,20 +188,15 @@ export const mutations = extendType({
         });
         if (!placed.ok) throw badInput(placed.message);
 
-        // A player's credits go into the pool like anyone's. The desks' fills
-        // reach the book through `bookFill`; this is the same step for the other
-        // side of the market, and without it a player could move the board only
-        // by convincing the desks to move it for them.
+        // The stake joins the pool, which is what a price is. This is the whole
+        // of the market's flow now — there is no other participant whose buying
+        // could move a line — so a bet that failed to reach the book here would
+        // be a bet the board never noticed.
         recordFill({
-          id: placed.bet.id,
           at: placed.bet.openedAt.getTime(),
-          bot: "Player",
           symbol: placed.bet.symbol,
-          ticker: placed.bet.ticker,
-          imageUrl: null,
           direction: placed.bet.direction as Direction,
           size: placed.bet.stake,
-          cents: placed.cents,
         });
         return toCryptoBetView(placed.bet);
       },

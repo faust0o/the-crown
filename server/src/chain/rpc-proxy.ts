@@ -28,7 +28,7 @@ import { RPC_URL } from "./program";
  * - **A rate limit per address**, well above what a player generates and far
  *   below what makes the endpoint useful to somebody else.
  *
- * The desks do not come through here. They run in this process and hold the real
+ * The server does not come through here. It runs in this process and holds the real
  * endpoint directly, so the limit below can be sized for browsers alone.
  */
 

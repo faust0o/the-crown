@@ -2,9 +2,8 @@
  * The pre-deploy step: stand up the chain side of the game.
  *
  * Creates the credit mint if there is not one, initialises the config and vault,
- * opens an account for every desk, funds the vault's buffer, and mints invite
- * codes. Idempotent throughout — running it twice is how you top up after
- * changing the desk roster, not a way to reset the game.
+ * and funds the vault's buffer. Idempotent throughout —
+ * running it twice is how you top the vault up, not a way to reset the game.
  *
  * ```sh
  * cd server && bun run chain:seed
@@ -12,10 +11,9 @@
  *
  * ## What it deliberately does not do
  *
- * **It does not airdrop SOL to the desks.** They do not need any. A desk signs
- * its own setup once and never again — the relayer is the fee payer and the rent
- * payer for every fill, desk or player alike, so the only account that needs SOL
- * is the relayer. Sending SOL to eight desk addresses would strand it there.
+ * **It does not airdrop SOL to anybody who bets.** They do not need any. The
+ * relayer is the fee payer and the rent payer for every fill, so the only
+ * account that needs SOL is the relayer.
  *
  * **It cannot fund the relayer.** faucet.solana.com is a browser flow behind a
  * GitHub login, so this prints what the relayer needs and where, and stops if it
@@ -44,11 +42,7 @@ import {
   getMinimumBalanceForRentExemptMint,
 } from "@solana/spl-token";
 
-import { DESK_NAMES } from "../bots";
-import { seedInviteCodes } from "../invites";
-import { LOG_INVITE_CODES } from "../env";
 import { configPda, connection, crownProgram, loadKeypair, vaultPda } from "./program";
-import { DESK_BANKROLL, makeDesks, openDeskAccount } from "./desks";
 
 /** Credits are whole units; decimals would invent half a credit. */
 const DECIMALS = 0;
@@ -69,9 +63,9 @@ const VAULT_BUFFER = Number(process.env.CROWN_VAULT_BUFFER ?? 500_000_000);
  * SOL the relayer needs on hand before a run is worth starting.
  *
  * Rent dominates: every lot opens a `Bet` account at ~0.0019 SOL and the relayer
- * pays it. Eight desks on a thirty-second tick put ~480 lots through a half-hour
- * round, so a round costs a little under a SOL and refunds it as the lots settle.
- * One round of headroom is the floor worth insisting on.
+ * pays it, getting it back as the lot settles. A busy round of five hundred lots
+ * is therefore a little under a SOL outstanding at once. One round of headroom is
+ * the floor worth insisting on.
  */
 const RELAYER_MIN_SOL = Number(process.env.CROWN_RELAYER_MIN_SOL ?? 1);
 
@@ -236,40 +230,6 @@ async function main() {
     say(`  topped up by ${top}`);
   }
   say(`  vault holds ${(await getAccount(conn, vault)).amount} credits`);
-
-  // --- the desks -----------------------------------------------------------
-  step(`desks (${DESK_NAMES.length})`);
-  const desks = makeDesks(DESK_NAMES, mint);
-  for (const desk of desks) {
-    let held = 0n;
-    try {
-      held = (await getAccount(conn, desk.tokens)).amount;
-      say(`  ${desk.name.padEnd(24)} ${desk.tokens.toBase58().slice(0, 8)}… holds ${held} (kept)`);
-      continue;
-    } catch {
-      // No account yet — open and capitalise it.
-    }
-    await openDeskAccount(desk, {
-      authority,
-      relayer: relayer.publicKey,
-      mint,
-      bankroll: DESK_BANKROLL,
-    });
-    held = (await getAccount(conn, desk.tokens)).amount;
-    say(`  ${desk.name.padEnd(24)} ${desk.tokens.toBase58().slice(0, 8)}… opened with ${held}`);
-  }
-  say(`  desks hold no SOL and need none — the relayer pays every fee and every rent`);
-
-  // --- invite codes --------------------------------------------------------
-  step("invite codes");
-  try {
-    const codes = await seedInviteCodes();
-    say(`  ${codes.length} usable`);
-    if (LOG_INVITE_CODES) for (const c of codes) say(`    ${c}`);
-    else say(`  (set LOG_INVITE_CODES=true to print them, or use \`bun run invites:mint\`)`);
-  } catch (err) {
-    say(`  skipped — no database reachable (${(err as Error).message.split("\n")[0]})`);
-  }
 
   // --- what the app needs to know -----------------------------------------
   //

@@ -1,13 +1,4 @@
-import type { Standing } from "./oracle/index";
-import {
-  CAP,
-  FEE,
-  FLOOR,
-  bandDrift,
-  outcomeSigma,
-  probabilities,
-  rankOutcomeProbability,
-} from "./crypto-odds";
+import { CAP, FEE, FLOOR, probabilities } from "./crypto-odds";
 
 /**
  * The market: one book, and every price read straight off it.
@@ -21,18 +12,19 @@ import {
  * says, immediately.
  *
  * That leaves the round's opening auction as the only thing the model ever says
- * about price. `openRound` stakes a real pool on each line in proportion to the
+ * about price. `openRound` stakes a pool on each line in proportion to the
  * prior, so an untouched book quotes the prior exactly, and every credit traded
  * after that dilutes it. The seeded stake is not a fudge factor standing in for
  * liquidity — it *is* the liquidity, it is denominated in credits like every
  * other number in the book, and it shows up in the depth panel like every other
  * fill.
  *
- * What protects a player who reads a move early is therefore not the pricing.
- * It is that the desks accumulate slowly at the start of a round and hard into
- * the end (see `bots.ts`), so the first credits behind a signal are few and the
- * mark barely stirs — which is exactly the window in which a player can buy it
- * cheap, and then watch the desks' own buying carry the mark up to them.
+ * **Players are the only flow.** There is no market maker behind the board and
+ * no model chasing it: after the opening print, a line moves when somebody backs
+ * it and at no other time. A line nobody trades sits at its opening prior all
+ * round, and a line the room is wrong about stays wrong until somebody takes the
+ * other side — which is the trade being offered, and the reason reading the
+ * board early is worth anything.
  *
  * The board's quote, the price a bet fills at, the value of an open position and
  * the depth bars all read this one place, so the views of a line cannot
@@ -44,7 +36,13 @@ import {
  * has never traded.
  */
 
-/** A tunable, read from the environment — see the note in `bots.ts`. */
+/**
+ * A tunable, read from the environment.
+ *
+ * Falls back rather than trusting `Number`: a typo in an env var yields NaN,
+ * which propagates silently through the arithmetic until every price is NaN and
+ * nothing anywhere says why.
+ */
 const tunable = (name: string, fallback: number): number => {
   const raw = Number(process.env[name]);
   return Number.isFinite(raw) ? raw : fallback;
@@ -54,36 +52,35 @@ export type Direction = "HIGHER" | "DRAW" | "LOWER";
 
 export const DIRECTIONS = ["HIGHER", "DRAW", "LOWER"] as const;
 
-export interface Trade {
-  id: string;
+/**
+ * A fill: credits joining or leaving a line, and when.
+ *
+ * Everything the pricing needs and nothing more. What *else* is true of a bet —
+ * whose it was, what it filled at, whether it is still open — is a `CryptoBet`
+ * row, and the orders panel reads it there rather than from a second copy kept
+ * here. There is one ledger.
+ */
+export interface Fill {
   at: number;
-  bot: string;
   symbol: string;
-  ticker: string;
-  imageUrl: string | null;
   direction: Direction;
   /** Credits staked. This is the flow that moves the price. */
   size: number;
-  /** Price per share in cents at the moment it filled. */
-  cents: number;
 }
 
 /**
- * How much of the fill-by-fill ledger to keep.
+ * How far back the depth bars count.
  *
- * Nothing renders it any more — the desks panel shows positions and depth comes
- * from the rolling aggregates below — so this is the audit trail's memory
- * budget and nothing else: roughly the last ten minutes of a round at the rate
- * the desks arrive into the cut. Trimmed in blocks rather than one entry at a
- * time, because at that rate it sits at capacity permanently and shifting the
- * whole array down to drop a single fill is a cost that only shows up under
- * exactly the load that made it necessary.
+ * A round, near enough. It used to be six minutes, which was the right window
+ * when eight desks printed every second and the wrong one the moment they
+ * stopped: real players arrive a few times a minute between them, so a six
+ * minute window showed an empty book on a coin that had genuinely traded all
+ * round. Depth is now the round's traded interest, which is the honest thing for
+ * it to be when the round's traded interest is all there is.
  */
-const TAPE_LIMIT = tunable("MARKET_TAPE_LIMIT", 4_000);
-/** Book depth counts trades inside this window. */
-const BOOK_WINDOW_MS = tunable("MARKET_BOOK_WINDOW_MS", 6 * 60_000);
-/** Depth is bucketed at this resolution — one bucket per tick of the desks. */
-const DEPTH_BUCKET_MS = 1_000;
+const BOOK_WINDOW_MS = tunable("MARKET_BOOK_WINDOW_MS", 30 * 60_000);
+/** Depth is bucketed at this resolution. */
+const DEPTH_BUCKET_MS = tunable("MARKET_DEPTH_BUCKET_MS", 5_000);
 const DEPTH_BUCKETS = Math.max(1, Math.ceil(BOOK_WINDOW_MS / DEPTH_BUCKET_MS));
 
 /** Prices are probabilities in cents; never 0 or 100, so a payout stays finite. */
@@ -97,13 +94,6 @@ export const CAP_CENTS = Math.round(CAP * 100);
 export const SPREAD_CENTS = Math.max(1, Math.round((FEE / 3) * 100));
 
 /**
- * How far a coin is expected to travel, in places, if the volume gap to a
- * neighbour were a certainty and the whole round were still to run. Small on
- * purpose: over one round the board shuffles by a place or two, not by five.
- */
-const DRIFT_PLACES = 1.2;
-
-/**
  * Credits the opening auction stakes across one coin's three lines.
  *
  * The only number in the pricing, and the one thing a market maker would
@@ -113,21 +103,23 @@ const DRIFT_PLACES = 1.2;
  * panel can show it, rather than hidden in a coefficient. Split across the legs
  * in proportion to the prior, so an untouched book quotes the prior exactly.
  *
- * It sets one thing: how much a round's buying is worth against the house's
- * opening opinion. The desks put roughly twenty times this through a coin over a
- * round, so a signal they back from the start ends up owning the pool and the
- * line converges on the outcome — while the first minutes, when they are barely
- * trading, move it only a cent or two. Raise it and the board is stickier and
- * the opening prior harder to argue with; lower it and early flow swings it.
+ * It sets one thing, and it is now the *only* thing standing between one player
+ * and the whole board: how many credits it takes to argue with the opening
+ * prior. It was 300,000 while eight desks put twenty times that through a coin
+ * every round — sized against their flow, and so large that a player betting a
+ * hundred credits moved a line by nothing at all. With the desks gone the flow
+ * is what people actually stake, which is two or three orders of magnitude less,
+ * and the pool has to be sized against *that* or the board is a picture.
+ *
+ * Raise it and the board is stickier and the opening prior harder to argue with;
+ * lower it and the first bet of a round swings it. This is the dial.
  */
-const OPENING_POOL = tunable("MARKET_OPENING_POOL", 300_000);
-const OPENING_DESK = "Opening Auction";
+export const OPENING_POOL = tunable("MARKET_OPENING_POOL", 2_000);
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 const lineKey = (symbol: string, d: Direction) => `${symbol}|${d}`;
 
-const tape: Trade[] = [];
 const lastCents = new Map<string, number>();
 /** Credits bought on each line this round. The only thing that moves a price. */
 const flow = new Map<string, number>();
@@ -137,21 +129,24 @@ const flow = new Map<string, number>();
  */
 const opening = new Map<string, number>();
 /**
- * The last fair value a desk brought to each asset, kept so a fill that arrives
- * without one — a player's — can still value an outcome that has no line.
+ * What the model says each of an asset's outcomes is worth, in cents.
+ *
+ * Read for one thing only: an outcome that is real but has no line — a coin that
+ * opened last finishing LOWER by falling off the board — still owns its share of
+ * the hundred, and the pool cannot price it because nobody can stake it. Seeded
+ * once at the open from the same prior the auction stakes, and never touched
+ * again; the model has no other say in what anything is worth.
  */
 const lastModel = new Map<string, Partial<Record<Direction, number>>>();
 
 /**
  * Rolling depth for one line: shares traded per bucket, plus the running sum.
  *
- * Depth used to be counted by rescanning the tape, which quietly made two
- * unrelated numbers depend on each other — how far back the panel can scroll and
- * how much traded in the last six minutes. At one print a minute per line the
- * tape covered the window several times over and nobody noticed; at one a second
- * it covers under a third of it, and `book()` reported a third of the depth
- * without any indication it was doing so. Keeping the total here decouples them,
- * and turns the book into a constant-time read at the same time.
+ * Depth used to be counted by rescanning a ring of past fills, which made the
+ * number the panel showed depend on how many fills the ring happened to be
+ * holding — it silently reported a fraction of the window's depth as soon as the
+ * fills arrived faster than the ring was sized for. Keeping the total here says
+ * what the window actually holds, and turns the book into a constant-time read.
  */
 interface Depth {
   shares: Float64Array;
@@ -208,76 +203,6 @@ export interface RoundBook {
   entries: { symbol: string; ticker: string; startRank: number }[];
 }
 
-/** Fraction of a round still to run, 0..1. */
-export function remainingFraction(
-  round: { startsAt: Date; endsAt: Date },
-  now = Date.now()
-): number {
-  const total = round.endsAt.getTime() - round.startsAt.getTime();
-  if (!(total > 0)) return 0;
-  return clamp((round.endsAt.getTime() - now) / total, 0, 1);
-}
-
-/**
- * Expected further movement in places, positive meaning "expected to slip down
- * the board", from the coin's live volume relative to its neighbours.
- *
- * Rank is decided by volume, so the distance to the coin above and below is the
- * whole story: a coin sitting 2% under the one above is far more likely to
- * overtake it than one sitting 60% under. Expressing that as a drift on the
- * expected finishing rank — rather than as a price directly — is what lets the
- * same number keep meaning something as the clock runs out, since a coin with
- * ten seconds left cannot act on any gap at all.
- */
-function volumeDrift(standing: Standing, board: Standing[]): number {
-  const i = board.findIndex((s) => s.symbol === standing.symbol);
-  if (i < 0) return 0; // fell off the board; there are no neighbours to close on
-
-  const above = i > 0 ? board[i - 1] : null;
-  const below = i < board.length - 1 ? board[i + 1] : null;
-  const v = Math.max(1, standing.quoteVolume);
-
-  // Fractional gap to each neighbour: 0 means level (a coin-flip to swap),
-  // large means safe. Squashed so the drift saturates rather than running away.
-  const squash = (gap: number) => 1 / (1 + Math.max(0, gap) * 14);
-  const pUp = above ? squash((above.quoteVolume - v) / v) : 0;
-  const pDown = below ? squash((v - below.quoteVolume) / Math.max(1, below.quoteVolume)) : 0;
-  return pDown - pUp;
-}
-
-/**
- * Where a line *should* trade — the desks' target, and the only fair value in
- * the codebase.
- *
- * Three inputs, and it needs all three. The live volume gaps say how likely the
- * coin is to swap with a neighbour from here; its rank *now versus its start
- * rank* is the outcome the bet actually resolves against; and the time left says
- * how much of that gap can still be closed. Drop the time term and a price is
- * pinned for a whole round by `startRank` alone — the board can reshuffle
- * completely without a chip moving, and the tape ends up disagreeing with
- * settlement at the cut.
- */
-export function fairCents(
-  standing: Standing,
-  board: Standing[],
-  direction: Direction,
-  startRank: number,
-  remaining: number
-): number {
-  const r = clamp(remaining, 0, 1);
-  // Two drifts, and they answer different questions. `bandDrift` is what a coin
-  // starting in this band was measured to do on average and is what the book
-  // opens at; `volumeDrift` is what *this* coin is doing right now. Nothing that
-  // hasn't happened yet can happen in no time at all, so both fade with the
-  // clock. At the open, with the coin still on its start rank and no volume gap
-  // yet closed, this returns the opening print exactly — so the desks have
-  // nothing to arbitrage until something actually moves.
-  const expected =
-    standing.rank + bandDrift(startRank, r) + volumeDrift(standing, board) * DRIFT_PLACES * r;
-  const p = rankOutcomeProbability(startRank, expected, outcomeSigma(r, startRank), direction);
-  return clamp(Math.round(p * 100), FLOOR_CENTS, CAP_CENTS);
-}
-
 /** Last traded price for a line, or null if the book isn't open on it. */
 function priceCents(symbol: string, direction: Direction): number | null {
   return lastCents.get(lineKey(symbol, direction)) ?? null;
@@ -311,16 +236,16 @@ export function quoteCents(symbol: string, direction: Direction): Quote | null {
 }
 
 /**
- * Write a fill into the ledger and the depth window.
+ * Write a fill into the depth window.
  *
  * Deliberately does *not* set a price: what a line is worth is a function of all
  * the flow on its asset, which is `remark`'s job. Use `recordFill` to trade;
  * this is the half that only remembers.
  */
-export function record(trade: Trade): void {
-  const line = lineKey(trade.symbol, trade.direction);
+export function record(fill: Fill): void {
+  const line = lineKey(fill.symbol, fill.direction);
 
-  const bucket = bucketOf(trade.at);
+  const bucket = bucketOf(fill.at);
   let d = depth.get(line);
   if (!d) {
     d = { shares: new Float64Array(DEPTH_BUCKETS), total: 0, bucket };
@@ -331,37 +256,29 @@ export function record(trade: Trade): void {
   // since the index is the timestamp modulo the ring. Nothing prints into the
   // past today; this keeps it that way.
   if (bucket > d.bucket - DEPTH_BUCKETS) {
-    d.shares[bucket % DEPTH_BUCKETS] += trade.size;
-    d.total += trade.size;
+    d.shares[bucket % DEPTH_BUCKETS] += fill.size;
+    d.total += fill.size;
   }
-
-  tape.push(trade);
-  if (tape.length > TAPE_LIMIT * 2) tape.splice(0, tape.length - TAPE_LIMIT);
 }
 
 /**
  * Record a fill, and re-mark the rest of that asset's book off the same print.
  *
- * The desks only ever trade the leg the projection favours, so on its own
- * `record` would leave the other two frozen at their opening print while fair
- * value walked away from them. That is not cosmetic: a player holding a *losing*
- * position could close it at a mark the round had already disproved, and two of
- * the three chips on the board would stop meaning anything.
+ * A bet buys one leg, so on its own `record` would leave the other two frozen at
+ * their opening print while the credits behind the coin moved underneath them.
+ * That is not cosmetic: a player holding a *losing* position could close it at a
+ * mark the round's own betting had already argued down, and two of the three
+ * chips on the board would stop meaning anything.
  *
  * The three outcomes are mutually exclusive and exhaustive, so their prices were
  * never independent — they sum to a hundred. What the fill did not take, the
- * remaining legs share in proportion to what is staked on them. `model` is every
- * leg's fair value, needed only to value an outcome that is real but has no line;
- * a desk has it to hand because it computed it to pick a side. A player has not,
- * and passes nothing — the asset's last one is remembered here and reused, which
- * is only ever the crown's or a structurally-closed leg's share of the hundred.
+ * remaining legs share in proportion to what is staked on them.
  */
-export function recordFill(trade: Trade, model?: Partial<Record<Direction, number>>): void {
-  record(trade);
-  const line = lineKey(trade.symbol, trade.direction);
-  flow.set(line, (flow.get(line) ?? 0) + Math.max(0, trade.size));
-  if (model) lastModel.set(trade.symbol, model);
-  remark(trade.symbol, model ?? lastModel.get(trade.symbol) ?? {});
+export function recordFill(fill: Fill): void {
+  record(fill);
+  const line = lineKey(fill.symbol, fill.direction);
+  flow.set(line, (flow.get(line) ?? 0) + Math.max(0, fill.size));
+  remark(fill.symbol, lastModel.get(fill.symbol) ?? {});
 }
 
 /**
@@ -443,41 +360,6 @@ export function closeCents(symbol: string, direction: Direction, stake: number):
 }
 
 /**
- * How many credits it takes to close `fraction` of the gap between what a line
- * is marked at and `fairCents`.
- *
- * The pricing rule run backwards. `m = target * (held + x) / (pool + x)` solves
- * to `x = (m * pool - target * held) / (target - m)`, which is what lets a desk
- * trade *to a price* rather than trade a size and hope: it asks what correcting
- * a mispricing costs and buys exactly that.
- *
- * Takes the fraction rather than a target price on purpose. A caller working
- * from the quoted mark is working from an integer that has already been rounded
- * and largest-remaindered, and a target derived from it lands on the wrong side
- * of the true pool share about half the time — asking for a move the book has
- * already made, which solves to zero credits. The desks bought nothing for the
- * first third of a round that way, on lines that were sixty cents mispriced.
- * Everything here is computed from the unrounded share instead.
- */
-export function creditsToClose(
-  symbol: string,
-  direction: Direction,
-  fairCents: number,
-  fraction: number
-): number {
-  const { staked, pool, target } = poolOf(symbol, lastModel.get(symbol) ?? {});
-  if (!(pool > 0) || !(target > 0)) return 0;
-
-  const now = (target * staked[direction]) / pool;
-  const wanted = now + (clamp(fairCents, 0, target) - now) * clamp(fraction, 0, 1);
-  // Leave a cent of headroom: a leg cannot own the whole book, and the solve
-  // divides by what is left of it.
-  const m = clamp(wanted, 0, target - 1);
-  if (!(m > now)) return 0; // already there, or past it — nothing to buy
-  return Math.max(0, (m * pool - target * staked[direction]) / (target - m));
-}
-
-/**
  * Take a position back out of the pool when it is closed early.
  *
  * The inverse of the buy, and it has to exist. A mark is a line's share of the
@@ -486,6 +368,10 @@ export function creditsToClose(
  * bid it had just created and book the difference. Removing exactly what was
  * staked makes the round trip cost precisely the spread, which is the price the
  * design puts on it.
+ *
+ * It is also what lets a mark come back down at all. Nothing sells short here, so
+ * the only two ways a line falls are somebody backing another leg of the same
+ * coin, and somebody closing this one.
  */
 export function unwind(symbol: string, direction: Direction, stake: number): void {
   const line = lineKey(symbol, direction);
@@ -508,9 +394,9 @@ export function unwind(symbol: string, direction: Direction, stake: number): voi
  * which is the right way round, and is why the first credits of a round matter
  * more per credit than the last. Nothing else about a line's history enters.
  *
- * Reversible, which is the property that makes a hedge mean something: the desks
- * can only buy, never sell, but when a signal flips and they start buying the
- * opposite leg, that leg's share overtakes and the first one comes back down.
+ * Reversible, which is what lets the room change its mind: nobody can sell short,
+ * but when the flow turns and the other leg starts taking credits, its share
+ * overtakes and the first one comes back down.
  *
  * A leg that is live but not on the book still owns its share of the hundred, at
  * what the model says it is worth — the outcome a coin that opened last gets
@@ -559,19 +445,6 @@ function remark(symbol: string, model: Partial<Record<Direction, number>>): void
   open.forEach((direction, i) => lastCents.set(lineKey(symbol, direction), bounded[i]));
 }
 
-/**
- * The raw ledger, newest first — every fill, exactly as it happened.
- *
- * Deliberately kept even though nothing serves it: what a desk *holds* is a
- * different question from what *traded*, and collapsing the second into the
- * first for the panel's sake must not mean losing it. This is the record that
- * says a price was reached by trading rather than by assertion.
- */
-export function recentTrades(limit = 40, symbol?: string): Trade[] {
-  const rows = symbol ? tape.filter((t) => t.symbol === symbol) : tape;
-  return rows.slice(-limit).reverse();
-}
-
 export interface BookLevel {
   direction: Direction;
   cents: number;
@@ -587,9 +460,9 @@ export interface BookLevel {
  * draw, so the bars move when the market does. The price on each level is the
  * ask, i.e. the identical number the board shows and a bet fills at.
  *
- * Read from the rolling aggregate rather than by scanning the tape: the client
- * polls this every two seconds per open coin, and a scan is the one thing here
- * whose cost grows with how hard the desks are trading.
+ * Read from the rolling aggregate rather than by walking a list of fills: the
+ * client polls this every couple of seconds per open coin, and a walk is the one
+ * thing here whose cost grows with how hard the board is being traded.
  */
 export function book(symbol: string): BookLevel[] {
   const bucket = bucketOf(Date.now());
@@ -622,7 +495,7 @@ const closedLine = (direction: Direction): Line => ({
 });
 
 /**
- * The three lines for one coin, quoted off the tape.
+ * The three lines for one coin, quoted off the book.
  *
  * A round the market isn't making a book on — anything already settled, which is
  * every round in the results panel — comes back closed rather than borrowing the
@@ -647,7 +520,7 @@ export function marketLines(round: { id: string }, symbol: string): Line[] {
  * What closing an open position pays right now.
  *
  * The stake bought `stake * odds` shares at entry; each pays one credit if the
- * bet lands. They're worth the tape's bid apiece — the last print less the same
+ * bet lands. They're worth the book's bid apiece — the last mark less the same
  * margin charged on the way in, so a round trip always costs the spread.
  *
  * Rounded down, not to nearest. On a small stake the spread is worth less than
@@ -672,9 +545,9 @@ export function closeValue(stake: number, odds: number, bidCents: number): numbe
  * The other is structural, from the model: a coin that opened at rank 1 cannot
  * finish HIGHER, and one that opened last cannot finish LOWER.
  *
- * A new round wipes the tape and every credit of accumulated flow. Prices are
- * quoted against *this* round's start ranks, so carrying yesterday's buying
- * forward would price the wrong bet.
+ * A new round wipes the depth window and every credit of accumulated flow.
+ * Prices are quoted against *this* round's start ranks, so carrying yesterday's
+ * buying forward would price the wrong bet.
  */
 export function openRound(round: RoundBook): void {
   if (round.id === openRoundId) return;
@@ -682,7 +555,6 @@ export function openRound(round: RoundBook): void {
 
   openRoundId = round.id;
   openEndsAt = round.endsAt.getTime();
-  tape.length = 0;
   lastCents.clear();
   quoted.clear();
   depth.clear();
@@ -699,9 +571,11 @@ export function openRound(round: RoundBook): void {
   for (const entry of round.entries) {
     if (entry.symbol === round.crownSymbol) continue;
     const prior = probabilities(entry.symbol, entry.startRank, fieldSize);
+    const model: Partial<Record<Direction, number>> = {};
     for (const direction of DIRECTIONS) {
       const p = { HIGHER: prior.higher, DRAW: prior.draw, LOWER: prior.lower }[direction];
       if (!(p > 0)) continue;
+      model[direction] = clamp(Math.round(p * 100), FLOOR_CENTS, CAP_CENTS);
       // The two legs that never open, and they are closed for different reasons.
       // A coin that started first cannot finish HIGHER at all — the prior has
       // already moved that mass onto the outcomes that can happen. A coin that
@@ -718,18 +592,14 @@ export function openRound(round: RoundBook): void {
       const staked = Math.max(1, Math.round(OPENING_POOL * p));
       opening.set(line, staked);
       lastCents.set(line, cents);
-      record({
-        id: `open-${round.id}-${entry.symbol}-${direction}`,
-        at,
-        bot: OPENING_DESK,
-        symbol: entry.symbol,
-        ticker: entry.ticker,
-        imageUrl: null,
-        direction,
-        size: staked,
-        cents,
-      });
+      record({ at, symbol: entry.symbol, direction, size: staked });
     }
+    // Every outcome the coin has, priced, whether or not it is offered. Used for
+    // exactly one thing — the share of the hundred an unbettable-but-real
+    // outcome owns — and it has to be recorded here because there is nothing
+    // else in the round that would ever compute it. Before, a desk brought a
+    // fresh one on every fill; now the prior is the whole of it.
+    lastModel.set(entry.symbol, model);
   }
 }
 
@@ -741,8 +611,8 @@ export function openRound(round: RoundBook): void {
  * already holds a finished round and the market waits for the boundary after it.
  * Nothing used to clear `openRoundId` in that case, so the market went on
  * quoting a round that had already resolved: the depth panel showed live prices
- * and every line in the results panel came back `available`. The tape is left
- * alone — it is the log of what traded — and only the quoting stops.
+ * and every line in the results panel came back `available`. The depth window is
+ * left alone — it is what traded — and only the quoting stops.
  */
 export function closeBook(): void {
   openRoundId = null;
@@ -750,9 +620,8 @@ export function closeBook(): void {
   quoted.clear();
 }
 
-/** Test seam — the tape is process-local and deliberately not persisted. */
+/** Test seam — the book is process-local and deliberately not persisted. */
 export function resetMarket(): void {
-  tape.length = 0;
   lastCents.clear();
   flow.clear();
   opening.clear();

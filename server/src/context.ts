@@ -16,8 +16,9 @@ export interface Context {
  * Resolve an Authorization bearer token to a user id via the sessions table.
  *
  * The lookup is by hash, because that is all the table holds — see `hashToken`.
- * A desk's account is never a caller: nothing mints a session for one, and
- * `me` filters them out anyway, but excluding them here means a desk can never
+ * A desk's account is never a caller. Nothing creates desks any more — the board
+ * is priced by players — but the accounts the old market-making desks used still
+ * exist behind their old bets, and excluding them here means one can never
  * become the subject of a request no matter how a session row arrived.
  */
 export async function createContext(

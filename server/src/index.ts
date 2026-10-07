@@ -8,21 +8,17 @@ import compression from "compression";
 import cors from "cors";
 import express from "express";
 import { GraphQLError } from "graphql";
-import { seedDesks, startBots, stopBots } from "./bots";
 import { createContext, type Context } from "./context";
 import {
   CORS_ORIGINS,
   HAS_DATABASE_URL,
   IS_PRODUCTION,
-  LOG_INVITE_CODES,
   PORT,
 } from "./env";
 import { graphqlLimiter, logoLimiter, securityHeaders, serveHealth, trustProxy } from "./http";
 import { mountRpcProxy } from "./chain/rpc-proxy";
 import { startChain, stopChain } from "./chain/runner";
-import { CHAIN_MODE } from "./env";
-import { seedInviteCodes } from "./invites";
-import { serveLogoProxy } from "./logo-proxy";
+import { serveLogos } from "./logo-store";
 import { oracle } from "./oracle/index";
 import { prisma } from "./prisma";
 import { startRoundLoop, stopRoundLoop } from "./rounds";
@@ -166,38 +162,16 @@ async function main() {
     httpServer.listen({ port: PORT }, resolve);
   });
 
-  // The desks bet real credits out of real accounts, so those have to exist
-  // before any of them arrives. Failing here must not take the API down — it
-  // just means the board has no market makers this run.
-  try {
-    await seedDesks();
-  } catch (err) {
-    console.warn("⚠  could not open desk accounts:", err instanceof Error ? err.message : err);
-  }
-
-  // Subscribe before the first poll so the desks see every publish, and put them
-  // on their own clocks.
-  // **Only one set of desks trades at a time.**
-  //
-  // The chain desks are the same eight identities as these, over the same coins,
-  // sizing themselves against the same shared position map. Running both meant
-  // two desks named Vega Trading buying the same leg of the same coin in two
-  // ledgers, and a per-coin exposure limit computed for one of them out of the
-  // other's trades — a limit sized against a bankroll twenty times larger than
-  // the desk it was being applied to.
-  if (CHAIN_MODE === "off") startBots();
   startSessionSweep();
 
-  // Four timers now outlive a request: the desks tick every second, the round
-  // loop every second, the oracle every ten, the session sweep hourly.
-  // `tsx --watch` restarts on SIGTERM, so without this a reload leaves the old
-  // process printing into a market it no longer serves while the new one opens
-  // a book on the same round.
+  // Three timers now outlive a request: the round loop every second, the oracle
+  // every ten, the session sweep hourly. `tsx --watch` restarts on SIGTERM, so
+  // without this a reload leaves the old process running a market it no longer
+  // serves while the new one opens a book on the same round.
   let closing = false;
   const shutdown = () => {
     if (closing) return;
     closing = true;
-    stopBots();
     stopChain();
     stopRoundLoop();
     stopSessionSweep();

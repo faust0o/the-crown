@@ -35,9 +35,11 @@ export const TRUST_PROXY = Number(process.env.TRUST_PROXY ?? (IS_PRODUCTION ? 1 
  * a deploy rather than a revert, and it means whatever misbehaves at 3am can be
  * turned off by somebody who did not write it.
  *
- * When on, the server mirrors each database round onto the program and lets the
- * desks trade against it. The database round keeps the clock either way — the
- * chain never decides *when* a round happens, only settles what happened in it.
+ * When on, the server mirrors each database round onto the program, commits and
+ * reveals its cut there, and settles what it owes. The database round keeps the
+ * clock either way — the chain never decides *when* a round happens, only
+ * settles what happened in it. Nothing bets through it yet: the only thing that
+ * ever did was the market-making desks, and they are gone.
  */
 export const CHAIN_MODE: "on" | "off" =
   (process.env.CHAIN_MODE ?? "off") === "on" ? "on" : "off";

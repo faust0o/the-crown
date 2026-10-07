@@ -1,15 +1,15 @@
 import { strict as assert } from "node:assert";
 import { after, before, describe, it } from "node:test";
 import { placeBet, type RoundWithEntries } from "./bets";
-import { resetBots, seedDesks, tradeOnArrival } from "./bots";
-import { openRound } from "./market";
+import { openRound, recordFill, resetMarket } from "./market";
+import { ordersForRound } from "./orders";
 import type { Standing } from "./oracle/index";
 import { prisma } from "./prisma";
 
 /**
- * The half that needs Postgres: that a desk's clip is a real `CryptoBet` row
- * against a real balance, that it is refused for everything a player would be
- * refused for, and that a bot account cannot become a player.
+ * The half that needs Postgres: that a bet is a real `CryptoBet` row against a
+ * real balance, that everything illegal is refused without costing anything, and
+ * that the orders feed reports what actually happened.
  *
  * Everything here is torn down afterwards, and the rounds it opens start far
  * enough in the past that they cannot collide with a live one.
@@ -103,78 +103,81 @@ after(async () => {
   await prisma.$disconnect();
 });
 
-describe("the desks bet real money", () => {
+async function makePlayer(credits: number) {
+  const player = await prisma.user.create({
+    data: { handle: `test-player-${Date.now()}-${madeUsers.length}`, credits },
+  });
+  madeUsers.push(player.id);
+  return player;
+}
+
+describe("a bet is money", () => {
   it("writes a CryptoBet row and debits the account", async (t) => {
     if (!reachable) return t.skip("no database reachable");
 
-    resetBots();
-    await seedDesks();
+    resetMarket();
     const round = await makeRound();
     openRound(round);
+    const player = await makePlayer(1_000);
 
-    const desks = await prisma.user.findMany({ where: { isDesk: true } });
-    assert.ok(desks.length >= 8, `the desks must have accounts, found ${desks.length}`);
-
-    const before = new Map(desks.map((d) => [d.id, d.credits]));
-    const fill = await tradeOnArrival(0, { symbol: "T5", standings: BOARD, round });
-    assert.ok(fill, "the desk traded");
+    const placed = await placeBet({
+      prisma,
+      userId: player.id,
+      round,
+      symbol: "T5",
+      direction: "HIGHER",
+      stake: 120,
+    });
+    assert.equal(placed.ok, true, "the bet was taken");
+    assert.ok(placed.ok && placed.cents > 0, "and it filled at a real price");
 
     const bets = await prisma.cryptoBet.findMany({ where: { roundId: round.id } });
-    assert.equal(bets.length, 1, "one arrival is one bet");
-    assert.equal(bets[0].stake, fill!.size, "the clip is the stake");
-    assert.equal(bets[0].symbol, "T5");
+    assert.equal(bets.length, 1, "one bet is one row");
+    assert.equal(bets[0].stake, 120);
     assert.ok(bets[0].odds > 1, "and it locked real odds");
 
-    const after = await prisma.user.findUnique({ where: { id: bets[0].userId } });
-    assert.equal(
-      after!.credits,
-      before.get(bets[0].userId)! - bets[0].stake,
-      "the stake came out of the desk's own balance"
-    );
+    const after = await prisma.user.findUnique({ where: { id: player.id } });
+    assert.equal(after!.credits, 1_000 - 120, "the stake came out of the player's balance");
   });
 
-  it("refuses a desk everything it would refuse a player", async (t) => {
+  it("refuses everything illegal, and a refusal costs nothing", async (t) => {
     if (!reachable) return t.skip("no database reachable");
     const round = await makeRound();
     openRound(round);
-    const desk = (await prisma.user.findFirst({ where: { isDesk: true } }))!;
+    const player = await makePlayer(1_000);
+
+    const bet = (over: Partial<Parameters<typeof placeBet>[0]>) =>
+      placeBet({
+        prisma,
+        userId: player.id,
+        round,
+        symbol: "T5",
+        direction: "HIGHER" as const,
+        stake: 10,
+        ...over,
+      });
 
     const cases: [string, Awaited<ReturnType<typeof placeBet>>][] = [
-      ["a stake of zero", await placeBet({ prisma, userId: desk.id, round, symbol: "T5", direction: "HIGHER", stake: 0 })],
-      ["a fractional stake", await placeBet({ prisma, userId: desk.id, round, symbol: "T5", direction: "HIGHER", stake: 1.5 })],
-      ["a coin not in the round", await placeBet({ prisma, userId: desk.id, round, symbol: "NOPE", direction: "HIGHER", stake: 10 })],
-      ["more than it holds", await placeBet({ prisma, userId: desk.id, round, symbol: "T5", direction: "HIGHER", stake: desk.credits + 1 })],
+      ["a stake of zero", await bet({ stake: 0 })],
+      ["a fractional stake", await bet({ stake: 1.5 })],
+      ["a coin not in the round", await bet({ symbol: "NOPE" })],
+      ["more than it holds", await bet({ stake: player.credits + 1 })],
+      ["the reigning coin", await bet({ round: { ...round, crownSymbol: "T5" } })],
+      ["a locked round", await bet({ round: { ...round, lockAt: new Date(Date.now() - 1) } })],
     ];
     for (const [what, outcome] of cases) {
       assert.equal(outcome.ok, false, `${what} must be refused`);
     }
 
-    // …and the crown, and a locked round.
-    const crowned = { ...round, crownSymbol: "T5" };
-    assert.equal(
-      (await placeBet({ prisma, userId: desk.id, round: crowned, symbol: "T5", direction: "HIGHER", stake: 10 })).ok,
-      false,
-      "the reigning coin is not bettable by anyone"
-    );
-    const locked = { ...round, lockAt: new Date(Date.now() - 1) };
-    assert.equal(
-      (await placeBet({ prisma, userId: desk.id, round: locked, symbol: "T5", direction: "HIGHER", stake: 10 })).ok,
-      false,
-      "and nobody bets after the lock"
-    );
-
-    const balance = await prisma.user.findUnique({ where: { id: desk.id } });
-    assert.equal(balance!.credits, desk.credits, "a refusal costs nothing");
+    const balance = await prisma.user.findUnique({ where: { id: player.id } });
+    assert.equal(balance!.credits, player.credits, "a refusal costs nothing");
   });
 
   it("cannot bet itself negative under a stale balance", async (t) => {
     if (!reachable) return t.skip("no database reachable");
     const round = await makeRound();
     openRound(round);
-    const broke = await prisma.user.create({
-      data: { handle: `broke-desk-${Date.now()}`, credits: 5, isDesk: true },
-    });
-    madeUsers.push(broke.id);
+    const broke = await makePlayer(5);
 
     const outcome = await placeBet({
       prisma,
@@ -189,31 +192,84 @@ describe("the desks bet real money", () => {
     const after = await prisma.user.findUnique({ where: { id: broke.id } });
     assert.equal(after!.credits, 5, "the debit is conditional, so it simply did not happen");
   });
+});
 
-  it("keeps desks out of the players' world", async (t) => {
+describe("the orders feed", () => {
+  it("prints a BUY for a bet and a SELL for the close, at the prices they got", async (t) => {
     if (!reachable) return t.skip("no database reachable");
-    await seedDesks();
 
-    const desks = await prisma.user.findMany({ where: { isDesk: true } });
-    const sessions = await prisma.session.count({
-      where: { userId: { in: desks.map((d) => d.id) } },
+    resetMarket();
+    const round = await makeRound();
+    openRound(round);
+    const player = await makePlayer(1_000);
+
+    const placed = await placeBet({
+      prisma,
+      userId: player.id,
+      round,
+      symbol: "T5",
+      direction: "HIGHER",
+      stake: 200,
     });
-    assert.equal(sessions, 0, "no desk has a session, so no desk can be logged in as");
-    assert.ok(
-      desks.every((d) => d.inviteCodeId === null),
-      "and none of them consumed an invite"
-    );
+    assert.ok(placed.ok);
+    // What the mutation does after a fill: the stake joins the pool.
+    recordFill({
+      at: placed.bet.openedAt.getTime(),
+      symbol: placed.bet.symbol,
+      direction: "HIGHER",
+      size: placed.bet.stake,
+    });
+
+    // `ordersForRound` rather than `orders`: which round is live is a question
+    // about the whole database, and a developer's own server having a real round
+    // open is not a reason for this to fail.
+    const opened = await ordersForRound(round.id, 40);
+    assert.equal(opened.length, 1, "one bet, one order");
+    assert.equal(opened[0].kind, "BUY");
+    assert.equal(opened[0].handle, player.handle, "the feed names who bet");
+    assert.equal(opened[0].credits, 200);
+    assert.equal(opened[0].cents, placed.cents, "at the price the bet actually filled at");
+    assert.equal(opened[0].pnl, null, "nothing is won or lost yet");
+
+    // What `cashOutCryptoBet` writes.
+    await prisma.cryptoBet.update({
+      where: { id: placed.bet.id },
+      data: { status: "CASHED_OUT", payout: 260, resolvedAt: new Date() },
+    });
+
+    const both = await ordersForRound(round.id, 40);
+    assert.equal(both.length, 2, "one row, two moments");
+    assert.equal(both[0].kind, "SELL", "and the close is the newer of them");
+    assert.equal(both[0].credits, 260, "a SELL reports what was credited");
+    assert.equal(both[0].pnl, 60, "and what that made against the stake");
+    assert.equal(both[1].kind, "BUY");
   });
 
-  it("does not refill a desk that has spent its money", async (t) => {
+  it("leaves the desk rows the old market left behind out of it", async (t) => {
     if (!reachable) return t.skip("no database reachable");
-    const desk = (await prisma.user.findFirst({ where: { isDesk: true } }))!;
-    await prisma.user.update({ where: { id: desk.id }, data: { credits: 42 } });
 
-    await seedDesks(); // a restart
+    resetMarket();
+    const round = await makeRound();
+    openRound(round);
+    const ghost = await prisma.user.create({
+      data: { handle: `ghost-desk-${Date.now()}`, credits: 1_000, isDesk: true },
+    });
+    madeUsers.push(ghost.id);
 
-    const after = await prisma.user.findUnique({ where: { id: desk.id } });
-    assert.equal(after!.credits, 42, "P&L persists; a restart is not a bailout");
-    await prisma.user.update({ where: { id: desk.id }, data: { credits: desk.credits } });
+    const placed = await placeBet({
+      prisma,
+      userId: ghost.id,
+      round,
+      symbol: "T5",
+      direction: "HIGHER",
+      stake: 50,
+    });
+    assert.equal(placed.ok, true, "the row exists — nothing stops one being written");
+
+    assert.deepEqual(
+      await ordersForRound(round.id, 40),
+      [],
+      "but a feed of the room's betting excludes it"
+    );
   });
 });

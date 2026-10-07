@@ -1,26 +1,41 @@
 import type { Keypair } from "@solana/web3.js";
 
 import { CHAIN_MODE } from "../env";
-import { BOARD_SIZE, oracle } from "../oracle/index";
+import { oracle } from "../oracle/index";
 import { prisma } from "../prisma";
 import { currentRound } from "../rounds";
-import { deskArrival, makeDesks, tickFor, type Desk } from "./desks";
-import { cutAndReveal, latestRound, openChainRound, recentRounds, rememberSeed, type ChainRound } from "./rounds";
+import {
+  cutAndReveal,
+  latestRound,
+  openChainRound,
+  recentRounds,
+  rememberSeed,
+  voidRound,
+  VOID_AFTER_SECONDS,
+  type ChainRound,
+} from "./rounds";
 import { readBoard } from "./book";
 import { openPositions, sweepSettlements } from "./settle";
+import { roundsInArrears } from "./arrears";
 import { reclaimRound } from "./reclaim";
 import { reportPreflight } from "./preflight";
-import { recordChainTrade } from "./tape";
-import { DESK_NAMES } from "../bots";
 import { keypairFrom, connection, configPda } from "./program";
 import { PublicKey } from "@solana/web3.js";
 
 /**
  * The chain, driven.
  *
- * Everything under `chain/` up to now has been callable and nothing has called
- * it. This is what runs: it keeps a chain round in step with the database round
- * that already owns the clock, and it lets the desks arrive.
+ * This is what runs: it keeps a chain round in step with the database round that
+ * already owns the clock, cuts and reveals it, and settles what it owes.
+ *
+ * ## Nothing bets on it yet
+ *
+ * The only thing that ever placed an on-chain bet was the market-making desks,
+ * and the desks are gone — the board is priced by players now and by nothing
+ * else. What is left here is the half that was always the point: rounds mirrored
+ * onto the program, the cut committed and revealed on chain, positions settled
+ * and rent reclaimed. It is correct and it is idle, and it stays until a player
+ * can place a bet through the program rather than through Postgres.
  *
  * ## Off by default
  *
@@ -70,9 +85,8 @@ const SETTLEMENT_WINDOW = Number(process.env.CHAIN_SETTLEMENT_WINDOW ?? 10);
  * most expensive call in the whole system — providers bill it at a large
  * multiple of an ordinary read because it walks the program's accounts. Sweeping
  * the window meant up to ten of them every five seconds, which is what actually
- * exhausted the quota: the 429s were not the desks trading, they were us asking
- * the same settled rounds whether they still owed anything, forever, long after
- * the answer stopped changing.
+ * exhausted the quota: the 429s were us asking the same settled rounds whether
+ * they still owed anything, forever, long after the answer stopped changing.
  *
  * A round that has paid out cannot acquire new positions — it is settled, and
  * `place_bet` refuses a round that is not open — so "drained" is permanent and
@@ -84,48 +98,78 @@ const drained = new Set<string>();
 let sweepCursor = 0;
 
 /**
- * How many positions to settle per tick while a round is being traded, and how
- * many once nothing is live.
+ * How often to ask the cluster what is still owed, anywhere.
  *
- * These are two numbers because settlement and the tape want the same scarce
- * thing — requests per second — and only one of them is being watched. A fill is
- * visible within the second; a payout is invisible and has until the player next
- * looks. Measured, settlement at the old flat rate wanted 12 req/s of an 8 req/s
- * budget by itself, which is why the desks were managing a quarter of their
- * intended pace: the invisible work was starving the visible work.
+ * The window above is a calendar and debts are not on a calendar. A round that
+ * fails to reveal, or whose sweep is interrupted, keeps its open positions while
+ * the window moves past it — and then nothing looks at it again, ever. Measured
+ * on devnet: 173 positions and about 3.4 million credits of stake behind rounds
+ * 0, 20 and 198, while the runner swept 401-410. The oldest had been payable for
+ * twelve days, and no log line anywhere said so.
  *
- * So it yields while a round is open and catches up once the round locks, when
- * the desks have stopped and the whole budget is idle anyway.
+ * `roundsInArrears` asks the question the window cannot: which rounds still hold
+ * an open position. It costs the expensive scan, so it runs on a slow timer and
+ * its answer is folded into the window until the next one.
+ */
+const ARREARS_EVERY_MS = Number(process.env.CHAIN_ARREARS_EVERY_MS ?? 5 * 60_000);
+let arrearsAt = 0;
+let arrears: ChainRound[] = [];
+
+/** Rounds whose seed is gone for good — warned about once, not every tick. */
+const unrevealable = new Set<string>();
+
+/**
+ * The rounds this tick should work on: the recent ones, plus anything that still
+ * owes however old it is.
+ *
+ * Merged into one list rather than handled separately, so every stage below —
+ * sweeping, revealing, reclaiming — covers a forgotten round by construction
+ * instead of each having to remember to.
+ */
+async function workList(w: Wiring): Promise<ChainRound[]> {
+  const recent = await recentRounds(SETTLEMENT_WINDOW);
+
+  if (Date.now() - arrearsAt >= ARREARS_EVERY_MS) {
+    arrearsAt = Date.now();
+    try {
+      const owed = await roundsInArrears(w.relayer);
+      arrears = owed.map((a) => a.round);
+      const forgotten = owed.filter((a) => !recent.some((r) => r.index === a.round.index));
+      if (forgotten.length) {
+        console.log(
+          `⛓  arrears: ${forgotten.reduce((n, a) => n + a.positions, 0)} position(s) owed on ` +
+            `round(s) ${forgotten.map((a) => a.round.index).join(", ")} — outside the window, picking them up`
+        );
+      }
+    } catch (err) {
+      // A failed scan is a stale work list, not a broken tick.
+      console.warn("⛓  arrears scan:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  const seen = new Set(recent.map((r) => r.index.toString()));
+  return [...recent, ...arrears.filter((r) => !seen.has(r.index.toString()))];
+}
+
+/**
+ * How many positions to settle per tick while a round is open, and how many once
+ * nothing is live.
+ *
+ * Two numbers because settlement competes for requests per second with anything
+ * the round itself needs, and only one of the two is being watched: a payout is
+ * invisible and has until the player next looks. So it yields while a round is
+ * open and catches up once the round locks and the whole budget is idle anyway.
  */
 const SETTLE_WHILE_LIVE = Number(process.env.CHAIN_SETTLE_LIVE ?? 2);
 const SETTLE_WHILE_IDLE = Number(process.env.CHAIN_SETTLE_IDLE ?? 5);
 
 let timer: ReturnType<typeof setInterval> | null = null;
-/**
- * Each desk's *pending* next turn, keyed by desk.
- *
- * A map rather than the array this used to be: every turn appended to that array
- * and nothing ever emptied it, so a day of running left tens of thousands of
- * dead handles behind it. There is only ever one timer per desk outstanding.
- */
-const deskTimers = new Map<number, ReturnType<typeof setTimeout>>();
 let running = false;
-
-/**
- * How long to wait for a desk's turn before giving up on it and moving on.
- *
- * A backstop for the transport's own deadline rather than a second copy of it —
- * a turn is several requests, and a fill waits out `sendChainTx`'s confirmation
- * poll on top of them, so this has to be generous. What it catches is a turn
- * that has stopped making progress for a reason nothing underneath it noticed.
- */
-const DESK_TURN_TIMEOUT_MS = Number(process.env.CHAIN_DESK_TURN_TIMEOUT_MS ?? 90_000);
 
 /** What the runner needs, resolved once at start. */
 interface Wiring {
   authority: Keypair;
   relayer: Keypair;
-  desks: Desk[];
   /** The mint credits are denominated in — needed to address a payout. */
   mint: PublicKey;
 }
@@ -158,6 +202,12 @@ async function syncSettledRows(addresses: string[], round: ChainRound): Promise<
   const entries = await readBoard(round.index, round.entryCount);
   const cutOf = new Map(entries.map((e) => [e.symbol, e.cutRank]));
 
+  // A voided round pays nothing but refunds. `settle_bet` says so explicitly —
+  // "no rank on it decides anything, including the ranks `record_cut` may have
+  // written before the seed went missing" — so scoring these rows off the cut
+  // would book winners and losers against a chain that had paid everybody back.
+  const voided = round.status === "Voided";
+
   for (const row of rows) {
     const cut = cutOf.get(row.symbol) ?? null;
 
@@ -169,7 +219,7 @@ async function syncSettledRows(addresses: string[], round: ChainRound): Promise<
     // A cut of zero is how "never recorded" is spelled, and the program treats it
     // as a void that refunds the stake rather than as a loss.
     const status =
-      cut == null
+      voided || cut == null
         ? "VOID"
         : cut < row.startRank
           ? row.direction === "HIGHER" ? "WON" : "LOST"
@@ -228,7 +278,7 @@ async function syncRoundInner(w: Wiring): Promise<void> {
   // positions between them, unrevealed and therefore unpayable, while the loop
   // reported no errors — it was busily doing nothing to the only round it could
   // see.
-  const window = await recentRounds(SETTLEMENT_WINDOW);
+  const window = await workList(w);
 
   // **One settlement scan per tick, rotating.**
   //
@@ -237,10 +287,19 @@ async function syncRoundInner(w: Wiring): Promise<void> {
   // paid out bought nothing. Rotating means a backlog of N rounds takes N ticks
   // to revisit instead of N scans every tick, which is the same work spread out
   // rather than the same work repeated.
-  const owing = window.filter((r) => r.status === "Settled" && !drained.has(r.index.toString()));
+  // **Voided rounds owe money too.**
+  //
+  // `settle_bet` takes `Settled || Voided`, and on a voided round it refunds
+  // every stake — that is the whole point of `void_round`, which exists so a
+  // round whose seed was lost does not strand its positions forever. Filtering
+  // to `Settled` alone left the one kind of round that was voided *for* being
+  // stuck permanently stuck, with nothing sweeping the refunds it had just been
+  // made eligible for.
+  const payable = (r: ChainRound) => r.status === "Settled" || r.status === "Voided";
+  const owing = window.filter((r) => payable(r) && !drained.has(r.index.toString()));
   if (owing.length) {
     const round = owing[sweepCursor++ % owing.length];
-    // Yield to the desks while anything is actually being traded.
+    // Yield while a round is open; catch up once nothing is live.
     const live = window.some((r) => r.status === "Open" && Date.now() < r.lockAt.getTime());
     const swept = await sweepSettlements({
       round,
@@ -292,6 +351,11 @@ async function syncRoundInner(w: Wiring): Promise<void> {
   // tick and only after everything above has had its turn: reclaiming is the
   // least urgent thing here — the rent is already spent and waiting another five
   // seconds costs nothing, where a payout delayed is a player unpaid.
+  //
+  // `Settled` and not `payable` here, deliberately: `close_round` requires
+  // `Settled`, so a voided round's rent stays locked up on chain however drained
+  // it is. That is the program's rule, not an oversight in this list — asking to
+  // close one would just spend a transaction on a `WrongStatus`.
   const finished = window.find(
     (r) => r.status === "Settled" && drained.has(r.index.toString())
   );
@@ -308,7 +372,11 @@ async function syncRoundInner(w: Wiring): Promise<void> {
   }
 
   for (const round of window) {
-    if (round.status === "Settled") continue;
+    // Voided as well as Settled: a voided round is finished being decided.
+    // Passing it to `cutAndReveal` sent a `record_cut` per entry into a program
+    // that refuses one — and then took the `no-seed` branch and asked to void it
+    // again — every tick, forever.
+    if (payable(round)) continue;
 
     // Not settled: it needs cutting, revealing, or is simply still running.
     const outcome = await cutAndReveal({ authority: w.authority, round });
@@ -322,8 +390,36 @@ async function syncRoundInner(w: Wiring): Promise<void> {
       const stored = await prisma.round.findFirst({
         where: { startsAt: round.startsAt, seed: { not: null } },
       });
-      if (stored?.seed) rememberSeed(round.index, stored.seed);
-      else console.warn(`⚠  chain: round ${round.index} has no recoverable seed and cannot be revealed`);
+      if (stored?.seed) {
+        rememberSeed(round.index, stored.seed);
+        unrevealable.delete(round.index.toString());
+      } else {
+        // Nothing anywhere holds this round's seed, so it can never be revealed
+        // and its positions can never resolve normally. After a long wait, the
+        // program lets it be given up on instead, which refunds every stake —
+        // the only outcome available once the result is unverifiable.
+        const gave = await voidRound({ authority: w.authority, round }).catch((err) => {
+          console.warn(`⚠  chain: voiding round ${round.index}:`, err?.message ?? err);
+          return "too-early" as const;
+        });
+        if (gave === "voided") {
+          console.log(
+            `⛓  round ${round.index} had no recoverable seed and was voided — its stakes refund on the next sweep`
+          );
+          unrevealable.delete(round.index.toString());
+        } else if (!unrevealable.has(round.index.toString())) {
+          // Once per round. This is now reachable for rounds the window had
+          // abandoned — including ones whose database row is long gone — and a
+          // line per round per tick would bury everything else in the log.
+          unrevealable.add(round.index.toString());
+          console.warn(
+            `⚠  chain: round ${round.index} has no recoverable seed and can never be revealed. ` +
+              (gave === "unsupported"
+                ? "The deployed program predates `void_round`; deploy it and the stakes refund automatically."
+                : `Its stakes refund once it can be voided, ${VOID_AFTER_SECONDS / 3600}h after it ended.`)
+          );
+        }
+      }
     }
   }
 
@@ -382,152 +478,7 @@ async function syncRoundInner(w: Wiring): Promise<void> {
 }
 
 /**
- * One desk's turn.
- *
- * Balance is re-read per arrival rather than cached. The cached version in
- * `bots.ts` existed because a balance read was a Postgres round trip on a path
- * that ran eight times a second; here the desks arrive once a second between
- * them and the read is one `getTokenAccountBalance`, so the staleness is not
- * worth the arithmetic it would put behind every clip.
- */
-/**
- * Every desk's credit balance, read in one request for all of them.
- *
- * This was a `getTokenAccountBalance` per desk turn — eight separate reads of
- * eight accounts, once a second between them, and never cached. On a budget of
- * eight requests a second that is an eighth of everything, spent asking the same
- * question eight ways.
- *
- * One `getMultipleAccountsInfo` answers it for all of them, and the answer keeps
- * for a couple of seconds: a desk's balance moves when that desk trades, which
- * is at most once per tick, and the amount it moves by is known locally. Being
- * a little behind costs a desk a slightly stale idea of its own bankroll; the
- * program is what actually refuses an overspend, and it reads the account
- * itself inside the transaction.
- */
-const DESK_BALANCE_TTL_MS = Number(process.env.CHAIN_DESK_BALANCE_TTL_MS ?? 2_500);
-let deskBalances: { until: number; byDesk: Map<number, number> } | null = null;
-
-async function balancesFor(desks: Desk[]): Promise<Map<number, number>> {
-  if (deskBalances && Date.now() < deskBalances.until) return deskBalances.byDesk;
-
-  const infos = await connection().getMultipleAccountsInfo(desks.map((d) => d.tokens));
-  const byDesk = new Map<number, number>();
-  infos.forEach((info, i) => {
-    // The SPL token amount is a u64 at offset 64 of a token account.
-    if (info?.data?.length && info.data.length >= 72) {
-      byDesk.set(desks[i].id, Number((info.data as Buffer).readBigUInt64LE(64)));
-    }
-  });
-  deskBalances = { until: Date.now() + DESK_BALANCE_TTL_MS, byDesk };
-  return byDesk;
-}
-
-/** Spend against the cached figure, so a desk's next turn sees its own fill. */
-function debitCached(deskId: number, stake: number): void {
-  if (!deskBalances) return;
-  const held = deskBalances.byDesk.get(deskId);
-  if (held != null) deskBalances.byDesk.set(deskId, Math.max(0, held - stake));
-}
-
-async function deskTurn(w: Wiring, desk: Desk): Promise<void> {
-  const round = await latestRound();
-  if (!round || round.status !== "Open" || Date.now() >= round.lockAt.getTime()) return;
-
-  const credits = (await balancesFor(w.desks)).get(desk.id) ?? 0;
-  if (credits < 1) return; // no account yet, or traded flat
-
-  const fill = await deskArrival({
-    desk,
-    relayer: w.relayer,
-    round: {
-      id: round.address.toBase58(),
-      index: round.index,
-      entryCount: round.entryCount,
-      startsAt: round.startsAt,
-      endsAt: round.endsAt,
-      lockAt: round.lockAt,
-      crownSymbol: round.crownSymbol,
-      entries: [],
-    },
-    standings: oracle.standings(BOARD_SIZE),
-    credits,
-  });
-
-  if (fill) {
-    debitCached(desk.id, fill.stake);
-    // The tape is a view of this, and it has no other source while the desks
-    // bet through the program — `botTape` groups Postgres rows that no longer
-    // exist, so the panel goes blank while the market is demonstrably running.
-    recordChainTrade({
-      bot: desk.name,
-      symbol: fill.symbol,
-      ticker: fill.ticker,
-      direction: fill.direction,
-      size: fill.stake,
-      cents: fill.cents,
-    });
-    console.log(
-      `⛓  ${desk.name} ${fill.direction} ${fill.symbol} ${fill.stake} @ ${fill.cents}c`
-    );
-  }
-}
-
-/**
- * Put a desk back on the clock a tick after the one it just finished.
- *
- * **A watchdog guarantees the next turn, not the last one finishing.**
- * Rescheduling out of `.finally()` alone made a desk's whole future depend on
- * its current turn settling — and a turn that never settles is not a
- * hypothetical, it is what an RPC call with no deadline *is*. When it happened
- * the desk simply stopped: nothing threw, so nothing logged, and the round loop
- * carried on beside it because an interval does not wait on its own last tick.
- * All eight died inside one cycle, the market ran empty for four days, and the
- * only line anybody would have grepped for said every round had paid out in
- * full — which was true, and only because nothing had bet on them.
- *
- * So the timer owns the schedule and the promise does not. A turn that outstays
- * `DESK_TURN_TIMEOUT_MS` is abandoned — it may still be in flight and there is
- * no way to cancel it, but the desk stops waiting on it — and it says so on the
- * way past, because a desk that has quietly stopped trading is precisely the
- * thing this system had no way of telling anyone.
- */
-function scheduleDesk(w: Wiring, desk: Desk, delayMs: number): void {
-  const t = setTimeout(() => {
-    // Whichever of the two gets here first wins; the other becomes a no-op, so
-    // an abandoned turn that later completes cannot double up the schedule.
-    let handled = false;
-    const next = () => {
-      if (handled) return;
-      handled = true;
-      if (running) scheduleDesk(w, desk, tickFor(w.desks.length));
-    };
-
-    const watchdog = setTimeout(() => {
-      if (handled) return;
-      complain(
-        `desk ${desk.name}`,
-        `a turn has run ${Math.round(DESK_TURN_TIMEOUT_MS / 1000)}s without finishing — abandoning it`
-      );
-      next();
-    }, DESK_TURN_TIMEOUT_MS);
-    watchdog.unref?.();
-
-    void deskTurn(w, desk)
-      .catch((err) => complain(`desk ${desk.name}`, err))
-      .finally(() => {
-        clearTimeout(watchdog);
-        next();
-      });
-  }, delayMs);
-  // Chained rather than an interval: a tick does several network round trips and
-  // an interval would stack the next one on top of a slow RPC.
-  t.unref?.();
-  deskTimers.set(desk.id, t);
-}
-
-/**
- * Start mirroring rounds and running the desks.
+ * Start mirroring rounds.
  *
  * Idempotent, and it refuses rather than half-starts: a missing key or an
  * unseeded program is a configuration problem, and a runner that limped along
@@ -562,12 +513,12 @@ export async function startChain(): Promise<void> {
   }
   const mint = new PublicKey(cfgInfo.data.subarray(8 + 32, 8 + 64));
 
-  wiring = { authority, relayer, desks: makeDesks(DESK_NAMES, mint), mint };
+  wiring = { authority, relayer, mint };
   running = true;
 
   console.log(
     `⛓  chain mode on — authority ${authority.publicKey.toBase58().slice(0, 8)}…, ` +
-      `relayer ${relayer.publicKey.toBase58().slice(0, 8)}…, ${wiring.desks.length} desks`
+      `relayer ${relayer.publicKey.toBase58().slice(0, 8)}…`
   );
 
   const tick = () => {
@@ -576,12 +527,6 @@ export async function startChain(): Promise<void> {
   };
   timer = setInterval(tick, 5_000);
   tick();
-
-  // Staggered, so the desks interleave rather than eight of them waking on the
-  // same millisecond — a load spike with no purpose, since what a desk pays is
-  // set by what it buys and not by the order it arrives in.
-  const spacing = tickFor(wiring.desks.length) / wiring.desks.length;
-  wiring.desks.forEach((desk, i) => scheduleDesk(wiring!, desk, spacing * i));
 }
 
 /** Stop. Safe to call twice, and safe to call before `startChain`. */
@@ -589,10 +534,5 @@ export function stopChain(): void {
   running = false;
   if (timer) clearInterval(timer);
   timer = null;
-  for (const t of deskTimers.values()) clearTimeout(t);
-  deskTimers.clear();
   wiring = null;
 }
-
-/** Test seam — whether the chain loop is live. */
-export const chainRunning = (): boolean => running;

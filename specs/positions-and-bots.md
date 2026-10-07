@@ -1,5 +1,12 @@
 # Spec — Positions, adding to bets, and market-making bots
 
+> **Superseded in part.** Task 4 below built the market-making bots, which later
+> grew from decoration into real accounts placing real bets and became the thing
+> that set every price. They have since been removed: the board is priced by
+> player flow alone, and `botTape` is now `orders`, a feed of the actual
+> `CryptoBet` rows. Tasks 1–3 and 5 still describe the shipped behaviour. Kept as
+> the record of what was asked for and when.
+
 Repo: `/Users/ludwigschubert/the-crown`
 App: **The Crown** — a play-money prediction game. Ten trending assets from
 tokens.xyz compete on traded volume; players bet on where a token's **rank** at
@@ -28,8 +35,10 @@ Browser checks: Playwright is available at
 `/Users/ludwigschubert/.npm/_npx/e41f203b7505f1fb/node_modules` — symlink it as
 `node_modules` next to your script and `chromium.launch({ channel: "chrome" })`.
 
-Log in with an invite code printed at server boot (`🎟  Invite codes …`). Codes
-are single-use. There is no demo bypass.
+Log in with a wallet: connect Phantom or Solflare and sign the sentence the
+sign-in prompt shows. The signature is the whole of the auth — an address that
+has never played gets an account the first time it signs one. There is no demo
+bypass.
 
 Rounds are 30 minutes (wall-clock aligned, so they open on the hour and
 half hour) with the cut in the final minute. Use short rounds to see settlement
@@ -149,7 +158,7 @@ observed firing**. It should appear once per bet as it flips out of `OPEN`.
 - Every claim of "done" must be backed by something you ran. Do not report a
   feature working because the code looks right.
 - If a task's premise is wrong, say so and stop rather than building on it.
-- Do not touch: the crown mechanic, the commit-reveal cut, the invite-only login,
-  or the oracle's tokens.xyz polling cadence.
+- Do not touch: the crown mechanic, the commit-reveal cut, the wallet-signature
+  login, or the oracle's tokens.xyz polling cadence.
 - Report what you verified, what you could not, and anything you changed beyond
   the spec.

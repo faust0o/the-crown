@@ -39,8 +39,8 @@ export interface Check {
  *
  * It pays every fee and opens a rent-exempt account for every position, and the
  * rent comes back only when the position settles — so the floor is set by how
- * much is *outstanding at once*, not by the rate of play. A round of eight desks
- * across ten coins and three legs is about 240 positions at 0.00195 SOL, and a
+ * much is *outstanding at once*, not by the rate of play. Ten coins and three
+ * legs at a couple of hundred positions is about 0.5 SOL at 0.00195 each, and a
  * second round can be unsettled while the first is still paying out.
  */
 const RELAYER_FLOOR_SOL = Number(process.env.CROWN_RELAYER_FLOOR_SOL ?? 0.5);

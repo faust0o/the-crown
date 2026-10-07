@@ -15,6 +15,33 @@ Three pieces, one deploy:
 Split out of the Utopian Contributors website, where it lived at `/casino`;
 that is why the client still sits under `src/casino/`.
 
+## How a line is priced
+
+**A line's price is its share of the credits behind its coin.** The three
+outcomes on an asset are exhaustive, so what is staked on each one, over what is
+staked on all of them, is a probability already; that number in cents is the
+mark. There is no coefficient between the book and the price and nothing damps
+how far a credit can move it.
+
+Two things put credits in the book. The opening auction stakes
+`MARKET_OPENING_POOL` credits across a coin's lines in proportion to the model's
+prior, so an untouched book quotes the prior exactly — that is the model's entire
+say, and every credit traded after it dilutes it. Everything else is players. A
+bet joins the pool and moves the mark; closing takes it back out, so a round trip
+costs the spread and nothing else, at any size.
+
+There is no market maker. Until recently there were eight simulated ones — real
+accounts, real bets, sized off a fair-value model — and they were what dragged a
+line toward the outcome as a round ran. They are gone, along with the model that
+told them where to aim. What that buys is that the board says what the room
+thinks; what it costs is that a line nobody trades sits at its opening prior all
+round, and a line the room has wrong stays wrong until somebody takes the other
+side. That is the trade being offered.
+
+The whole of it lives in `server/src/market.ts`, and nothing outside that module
+may invent a price. `Orders` in the client is the flow that moved them: every bet
+opened and every position closed this round, off the `CryptoBet` rows themselves.
+
 ## Develop
 
 ```sh

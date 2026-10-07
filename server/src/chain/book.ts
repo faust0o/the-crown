@@ -1,12 +1,11 @@
 import { PublicKey } from "@solana/web3.js";
 
-import { configPda, connection, entryPda, roundPda, PROGRAM_ID } from "./program";
+import { connection, entryPda, roundPda, PROGRAM_ID } from "./program";
 import {
   CAP_CENTS,
   FLOOR_CENTS,
   SPREAD_CENTS,
   closeCents,
-  fillCents,
   type Book,
   type Direction,
 } from "./pricing";
@@ -20,10 +19,10 @@ import {
  * `RoundEntry.flow`, and every reader — this server, a second server, a player
  * with an explorer — is looking at the same account.
  *
- * What stays in `market.ts` is the half that was never book state: `fairCents`
- * and the `crypto-odds.ts` model under it. That is a desk's opinion about what a
- * line is worth, it is nobody's consensus state, and `pricing.rs` explains at
- * length why it does not belong on-chain.
+ * What stays in `market.ts` is the half that was never book state: the opening
+ * prior out of `crypto-odds.ts`. That is what a line is worth before anybody has
+ * traded it, it is nobody's consensus state, and `pricing.rs` explains at length
+ * why it does not belong on-chain.
  *
  * ## Reading is one RPC call, not thirty
  *
@@ -69,10 +68,9 @@ const unpad = (bytes: number[] | Uint8Array): string =>
 /**
  * How long a read of the board is good for.
  *
- * The desks tick far slower than this and the client polls every two seconds, so
- * a two-second cache turns a board render into at most one RPC call regardless of
- * how many readers arrive — while never showing a price that a fill from more
- * than one tick ago could have moved. Anything that must not be stale (the price
+ * The client polls every couple of seconds, so a two-second cache turns a board
+ * render into at most one RPC call regardless of how many readers arrive — while
+ * never showing a price a fill could have moved more than a poll ago. Anything that must not be stale (the price
  * a bet is about to be written at) does not come from here: `place_bet` re-reads
  * the account inside the transaction and prices against that.
  */
@@ -107,11 +105,16 @@ const inflight = new Map<string, Promise<EntryBook[]>>();
 
 /** Decoded straight from the account rather than through Anchor's client.
  *
+ * Exported for `layout.test.ts`, which is the only thing that can check a
+ * hand-rolled offset table: every field here is a byte count copied from
+ * `RoundEntry` in `state.rs`, and a field inserted there moves all of them at
+ * once with nothing failing to compile.
+ *
  * The layout is fixed and known — see `RoundEntry` in `state.rs` — and decoding
  * it here keeps this module free of a `Program` handle, which would drag a
  * signing wallet into what is a read.
  */
-function decodeEntry(data: Buffer): EntryBook {
+export function decodeEntry(data: Buffer): EntryBook {
   let o = 8; // account discriminator
   o += 32; // round
   const index = data.readUInt8(o); o += 1;
@@ -150,10 +153,10 @@ function decodeEntry(data: Buffer): EntryBook {
 /**
  * Every entry on a round, in one request.
  *
- * Concurrent callers share one flight. Without that, the board query and the
- * desks' own reads would each open their own request on a cold cache, and the
- * cost of a cache miss would scale with how many readers happened to miss
- * together — which is exactly when the RPC is least able to absorb it.
+ * Concurrent callers share one flight. Without that, every reader arriving on a
+ * cold cache opens its own request, and the cost of a cache miss scales with how
+ * many of them happened to miss together — which is exactly when the RPC is
+ * least able to absorb it.
  */
 export async function readBoard(roundIndex: bigint, entryCount: number): Promise<EntryBook[]> {
   // Scanned a little wider than the count claims. Indices are dense for rounds
@@ -229,11 +232,6 @@ export function quoteFor(entry: EntryBook, direction: Direction): Quote | null {
   };
 }
 
-/** What `stake` credits would fill at on this line — the price `place_bet` charges. */
-export function fillFor(entry: EntryBook, direction: Direction, stake: bigint): number | null {
-  return fillCents(entry.book, direction, stake);
-}
-
 /**
  * What closing a position of `stake` would actually pay per share, in cents.
  *
@@ -252,9 +250,6 @@ export function fillFor(entry: EntryBook, direction: Direction, stake: bigint): 
 export function closeFor(entry: EntryBook, direction: Direction, stake: bigint): number | null {
   return closeCents(entry.book, direction, stake);
 }
-
-/** The config PDA, exported so callers do not each re-derive it. */
-export const CONFIG = configPda();
 
 export type { Direction };
 export { PublicKey };

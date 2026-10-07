@@ -2,11 +2,16 @@
 /**
  * The model behind "where does this coin's rank end up" — not the price.
  *
- * `market.ts` owns prices: a line is worth whatever it last traded at. This
- * module supplies the two things a traded price cannot supply for itself — the
- * opening print for a line that has never traded (`probabilities`), and the
- * distribution the desks quote against (`rankOutcomeProbability`) — plus the
- * bounds every quote is clamped to.
+ * `market.ts` owns prices: a line is worth its share of the credits staked on
+ * its coin. This module supplies the one thing a traded price cannot supply for
+ * itself — what a line is worth before anybody has traded it — plus the bounds
+ * every quote is clamped to. That is now the model's entire say in the game.
+ *
+ * It used to be more. A second half of this module projected where a rank would
+ * land, and the market-making desks quoted against it all round; with the desks
+ * gone nothing consults a fair value, because there is nothing left that would
+ * act on the difference between one and the market. What the room will pay is
+ * what a line is worth.
  *
  * Priors measured over 1000 minutes of real 1m klines, using the shipped 10m
  * volume window, comparing rank at a round's open against rank ~60 minutes
@@ -40,8 +45,8 @@ export const FEE = 0.04;
 /**
  * No leg is ever priced beyond these, so a payout is always finite and capped.
  *
- * Widened from 2c/94c so a signal the desks have been accumulating all round can
- * run the price to where the outcome actually is. The three outcomes sum to a
+ * Widened from 2c/94c so a line the room has been buying all round can run to
+ * where the outcome actually is. The three outcomes sum to a
  * hundred, so with two legs held at the floor a coin with all three lines open
  * tops out at 98c; only a coin whose starting rank closes one leg — rank 1, or
  * last place — can print 99c. Widening cuts both ways and the trade is
@@ -51,93 +56,6 @@ export const FEE = 0.04;
 export const FLOOR = 0.01;
 export const CAP = 0.99;
 
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-
-/** Abramowitz & Stegun 7.1.26. */
-function erf(x: number): number {
-  const t = 1 / (1 + 0.3275911 * Math.abs(x));
-  const y =
-    1 -
-    ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t +
-      0.254829592) *
-      t *
-      Math.exp(-x * x);
-  return x >= 0 ? y : -y;
-}
-
-function normCdf(z: number): number {
-  return 0.5 * (1 + erf(z / Math.SQRT2));
-}
-
-/**
- * Inverse normal CDF — Acklam's rational approximation, good to ~1e-9.
- *
- * Here to run `bandPrior` backwards: the priors are measured frequencies, and
- * the rest of this module works in "where will the final rank land", so
- * something has to turn one into the other. See `bandShape`.
- */
-function probit(p: number): number {
-  const a = [-39.696830286653757, 220.94609842452050, -275.92851044696869,
-             138.35775186726900, -30.664798066147160, 2.5066282774592392];
-  const b = [-54.476098798224058, 161.58583685804089, -155.69897985988661,
-             66.801311887719720, -13.280681552885721];
-  const c = [-0.0077848940024302926, -0.32239645804113648, -2.4007582771618381,
-             -2.5497325393437338, 4.3746641414649678, 2.9381639826987831];
-  const d = [0.0077846957090414622, 0.32246712907003983, 2.4451341684908210,
-             3.7544086619074162];
-  const lo = 0.02425;
-  const q = p < lo || p > 1 - lo ? Math.sqrt(-2 * Math.log(p < 0.5 ? p : 1 - p)) : p - 0.5;
-
-  if (p < lo || p > 1 - lo) {
-    const z =
-      (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
-      ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
-    return p < 0.5 ? -z : z;
-  }
-  const r = q * q;
-  return (
-    ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) /
-    (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1)
-  );
-}
-
-/**
- * The rank distribution a band's measured prior implies: how far a coin in that
- * band is expected to drift, and how wide the landing spread is with a whole
- * round to run.
- *
- * This is the join between the module's two halves, and it exists because they
- * used to disagree. `probabilities` is what the book opens at; `outcomeSigma`
- * and `rankOutcomeProbability` are what the desks quote against all round. Both
- * are functions of starting rank alone at the open, so they were two answers to
- * one question — and they differed by 26c on a top-three coin, which the desks
- * then spent the first minutes of every round arbitraging away. The board moved
- * before the board had moved.
- *
- * Running the prior backwards fixes the direction of the dependency. A Normal
- * over the final rank has two free parameters and the prior pins both:
- *
- *     P(final < start) = higher  and  P(final > start) = lower
- *
- * which solve to `sigma = -1 / (z_higher + z_lower)` and a shift of
- * `sigma * (z_lower - z_higher) / 2`. DRAW then comes out right on its own,
- * because the three are exhaustive. So `fairCents` at the open *is* the opening
- * print, by construction rather than by coincidence, and every cent of daylight
- * between mark and model after that is something that happened in the round.
- *
- * Both parameters keep their measured meaning. The shift is the asymmetry the
- * priors recorded — the bottom of the board drifts upward, the middle downward.
- * The spread is the dispersion, and it really is per-band: a top-three coin
- * holds its rank half the time, so its landing spread is under a place, while a
- * mid-board coin's is over two.
- */
-function bandShape(startRank: number): { shift: number; sigma: number } {
-  const { higher, lower } = bandPrior(startRank);
-  const zHigher = probit(higher);
-  const zLower = probit(lower);
-  const sigma = -1 / (zHigher + zLower);
-  return { shift: (sigma * (zLower - zHigher)) / 2, sigma };
-}
 
 function normalise(t: Triple): Triple {
   const z = t.higher + t.draw + t.lower;
@@ -154,7 +72,16 @@ export function probabilities(_symbol: string, startRank: number, _fieldSize: nu
   // The field is whatever is trending, so there are no stable per-token priors
   // to lean on — position in the board is the whole signal. Refit from observed
   // round outcomes once enough have accumulated.
-  const t: Triple = { ...bandPrior(startRank) };
+  // Normalised unconditionally, not only on the rank-1 branch below.
+  //
+  // Three of the four bands were measured to sum to exactly one and one was not:
+  // the outside-the-top-ten band is 53/24/22, which is ninety-nine. Every band
+  // the board can currently produce sums to 1.0 *exactly* in IEEE754, so this
+  // changes no price the game quotes today — but "the coin's three prices sum to
+  // a hundred" is an invariant `market.ts` states and `openRound` relies on, and
+  // a band that quietly breaks it should not be one board-size change away from
+  // being reachable.
+  const t: Triple = normalise(bandPrior(startRank));
 
   // Finishing better than first is not a thing that can happen, so that mass has
   // to go to the outcomes that can, and the coin's three prices still sum to a
@@ -167,67 +94,7 @@ export function probabilities(_symbol: string, startRank: number, _fieldSize: nu
   // were. A coin that opened last *can* finish LOWER — dropping off the board is
   // exactly that, and `recordCut` settles it that way — it simply isn't offered
   // as a bet. Handing its share to HIGHER and DRAW priced two lines at what a
-  // third outcome was worth, and left the opening print 15c and 29c away from
-  // what the desks made those same two lines. Which legs open is `openRound`'s
-  // decision; this only says what each outcome is worth.
+  // third outcome was worth. Which legs open is `openRound`'s decision; this
+  // only says what each outcome is worth.
   return t;
-}
-
-/**
- * How wide the final rank can still land, given where the coin started and how
- * much time is left.
- *
- * At the open the spread is whatever that coin's band was measured to have; by
- * the cut it is nothing. Shrinking as the square root of the time left is what
- * makes a quote converge on the realised outcome as the round runs out — a
- * position that is winning with ten minutes to go is worth less than the same
- * position winning with ten seconds to go, which is what makes closing early a
- * decision rather than a formality.
- *
- * Per-band rather than one number for the whole field, because the dispersion
- * genuinely is: the top of the board holds its rank half the time and the middle
- * almost never. A single sigma had to be wrong for most of the board, and it was
- * wrong in the expensive direction — it priced DRAW on a top-three coin at 21c
- * against a measured 50c.
- */
-export function outcomeSigma(remaining: number, startRank: number): number {
-  return Math.max(0.12, bandShape(startRank).sigma * Math.sqrt(clamp(remaining, 0, 1)));
-}
-
-/**
- * Where a coin's final rank is expected to land before any live evidence — the
- * drift its band was measured to have, faded out as the round runs out.
- *
- * Scaled by the time left for the same reason the volume drift is: nothing that
- * has not happened yet can happen in no time at all. At the cut the expectation
- * is simply where the coin stands.
- */
-export function bandDrift(startRank: number, remaining: number): number {
-  return bandShape(startRank).shift * clamp(remaining, 0, 1);
-}
-
-/**
- * Chance a coin that opened at `startRank` resolves `direction`, given where its
- * final rank is expected to land and how much it can still move.
- *
- * A bet is a claim about the coin's rank at the cut *relative to where it
- * started the round*, so model the final rank as Normal(expectedRank, sigma) and
- * read the three outcomes off that. Splitting the expectation out from the
- * spread is what lets `market.ts` push the mean around with live volume while
- * keeping the same convergence: as sigma collapses the three legs go to the
- * indicator of the standing that actually happened.
- */
-export function rankOutcomeProbability(
-  startRank: number,
-  expectedRank: number,
-  sigma: number,
-  direction: "HIGHER" | "DRAW" | "LOWER"
-): number {
-  const cdf = (x: number) => normCdf((x - expectedRank) / Math.max(1e-6, sigma));
-
-  // Ranks are integers, so "below startRank" is "at most startRank - 1".
-  const higher = cdf(startRank - 0.5);
-  const lower = 1 - cdf(startRank + 0.5);
-  const draw = Math.max(0, 1 - higher - lower);
-  return clamp({ HIGHER: higher, DRAW: draw, LOWER: lower }[direction], 0, 1);
 }
