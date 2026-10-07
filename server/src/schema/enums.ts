@@ -14,3 +14,9 @@ export const RankDirection = enumType({
   name: "RankDirection",
   members: ["HIGHER", "DRAW", "LOWER"],
 });
+
+/** Whether an order opened a position or closed one. */
+export const OrderKind = enumType({
+  name: "OrderKind",
+  members: ["BUY", "SELL"],
+});

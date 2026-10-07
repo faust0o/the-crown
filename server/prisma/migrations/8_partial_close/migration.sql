@@ -1,0 +1,11 @@
+-- Selling part of a position.
+--
+-- A partial sale shrinks the lot it came from and writes the slice that left as
+-- its own CASHED_OUT row, pointing back at the lot through this column. Every
+-- sale is therefore a row with its own size, price and time, which is what lets
+-- the orders feed print each one at the price it actually happened.
+--
+-- Null on every bet placed directly, including all of them before this. The
+-- orders feed reads that: a slice prints one SELL, and would otherwise also
+-- print a BUY for a purchase nobody made.
+ALTER TABLE "CryptoBet" ADD COLUMN "parentId" TEXT;

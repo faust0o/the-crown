@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { readFileSync } from "node:fs";
 import { parse, validate, specifiedRules, GraphQLSchema } from "graphql";
 import { costLimit, depthLimit, MAX_COST, MAX_DEPTH } from "./limits";
 import { schema } from "./index";
@@ -24,6 +25,48 @@ describe("query budgets", () => {
       `{ roundReplay(roundId: "abc") { t symbol rank quoteVolume } }`,
     ];
     for (const q of queries) assert.deepEqual(errorsFor(q), [], q);
+  });
+
+  /**
+   * The same claim, made against the documents that actually ship.
+   *
+   * The list above is hand-copied, and hand-copied is how it drifted: the
+   * results panel asked for twelve rounds of the full round shape — every
+   * entry's book included — which priced out at 44,621 against a budget of
+   * 5,000. The server rejected it during validation, so no resolver ever ran,
+   * Apollo handed the panel no data, and it reported "no rounds have settled
+   * yet" no matter what the database held. A budget that silently turns a
+   * feature off is worse than no budget, and nothing here noticed for the same
+   * reason the outage was invisible: the test was reading a copy.
+   *
+   * Skipped rather than failed when the client tree isn't there, since the
+   * server is deployable on its own.
+   */
+  it("lets the documents the client actually ships through", (t) => {
+    const file = new URL("../../../src/casino/crypto/graphql.ts", import.meta.url);
+    let source: string;
+    try {
+      source = readFileSync(file, "utf8");
+    } catch {
+      return t.skip("no client tree beside this server");
+    }
+
+    // The client assembles a few documents from shared field fragments; inline
+    // them the way the template literal does, or this prices a hole.
+    const chunk = (name: string) =>
+      (source.match(new RegExp(`const ${name} = \`([\\s\\S]*?)\``)) ?? [])[1] ?? "";
+    const inline = (doc: string) =>
+      doc
+        .replace(/\$\{ROUND_FIELDS\}/g, chunk("ROUND_FIELDS"))
+        .replace(/\$\{BET_FIELDS\}/g, chunk("BET_FIELDS"));
+
+    const documents = [...source.matchAll(/gql`([\s\S]*?)`/g)].map((m) => inline(m[1]));
+    assert.ok(documents.length >= 5, `expected to find the client's documents, got ${documents.length}`);
+
+    for (const doc of documents) {
+      const name = (doc.match(/(?:query|mutation)\s+(\w+)/) ?? [])[1] ?? "(anonymous)";
+      assert.deepEqual(errorsFor(doc), [], `${name} must fit the budget`);
+    }
   });
 
   it("refuses a document nested past the limit", () => {

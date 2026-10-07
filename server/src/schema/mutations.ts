@@ -2,11 +2,13 @@ import { extendType, nonNull, arg, stringArg, idArg, intArg } from "nexus";
 import { GraphQLError } from "graphql";
 import type { Prisma, PrismaClient } from "../generated/prisma";
 import { hashToken, newHandle, newToken, sessionExpiry } from "../auth";
+import { issueChallenge, normaliseAddress, verifyChallenge } from "../wallet-auth";
 import { callerId } from "../context";
 import { toUserView } from "../views";
 import { currentRound } from "../rounds";
 import { confirmCreditPurchase, prepareCreditPurchase } from "../chain/purchase";
 import { closeCents, closeValue, recordFill, unwind, type Direction } from "../market";
+import { sellPosition } from "../sell";
 import { placeBet } from "../bets";
 import { liveRankOf, toCryptoBetView } from "../crypto-views";
 
@@ -299,6 +301,42 @@ export const mutations = extendType({
 
 
 
+
+    /**
+     * Sell part or all of a position, at the current bid.
+     *
+     * A position is a line — `(coin, direction)` — not a lot, so this is what
+     * the sell panel calls and `cashOutCryptoBet` below is the special case of
+     * it that names one row. Filled oldest lot first, priced once for the whole
+     * clip; see `sell.ts` for why both of those are the rule.
+     */
+    t.nonNull.field("sellCryptoPosition", {
+      type: "CryptoSale",
+      args: {
+        symbol: nonNull(stringArg()),
+        direction: nonNull(arg({ type: "RankDirection" })),
+        stake: nonNull(intArg()),
+      },
+      resolve: async (_root, args, ctx) => {
+        const userId = callerId(ctx);
+        const round = await currentRound();
+        if (!round) throw badInput("That round has ended — it will settle on its own.");
+
+        const sold = await sellPosition({
+          prisma: ctx.prisma,
+          userId,
+          round,
+          symbol: args.symbol,
+          direction: args.direction,
+          stake: args.stake,
+          // A coin that has dropped off the board still stands where the cut
+          // will score it, and the tape still quotes it there.
+          rank: liveRankOf(args.symbol),
+        });
+        if (!sold.ok) throw badInput(sold.message);
+        return sold.sale;
+      },
+    });
 
     t.nonNull.field("cashOutCryptoBet", {
       type: "CryptoBet",

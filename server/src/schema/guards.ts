@@ -71,6 +71,18 @@ export const mineOrEmpty: Guard = async (resolve, root, args, ctx, info) => {
 };
 
 /**
+ * The same reasoning as `mineOrEmpty`, for a field whose empty answer is null.
+ *
+ * A nullable field can carry its own "there is nothing here" without taking the
+ * document down with it, and "what would my position fetch" has an honest answer
+ * for a caller who holds nothing: none.
+ */
+export const mineOrNull: Guard = async (resolve, root, args, ctx, info) => {
+  if (!ctx.userId) return null;
+  return resolve(root, args, ctx, info);
+};
+
+/**
  * Fixed-window counter, in memory.
  *
  * In memory because there is one server process and the limits exist to stop a
@@ -156,13 +168,19 @@ export const guards: IMiddlewareTypeMap<unknown, Context, Args> = {
     roundTokens: limit(120, 60_000),
     cryptoRounds: limit(120, 60_000),
     cryptoRankHistory: limit(240, 60_000),
+    orders: limit(600, 60_000),
+    // Polled while the amount is being typed, so its budget is a panel's, not a
+    // trade's — the trade it precedes is `sellCryptoPosition` below.
+    cryptoSellQuote: chain(mineOrNull, limit(600, 60_000)),
   },
   Mutation: {
-    redeemInvite: limit(5, 10 * 60_000),
+    walletChallenge: limit(20, 10 * 60_000),
+    walletLogin: limit(10, 10 * 60_000),
     prepareCreditPurchase: chain(requireUser, limit(20, 60_000)),
     confirmCreditPurchase: chain(requireUser, limit(20, 60_000)),
     placeCryptoBet: chain(requireUser, limit(60, 60_000)),
     cashOutCryptoBet: chain(requireUser, limit(60, 60_000)),
+    sellCryptoPosition: chain(requireUser, limit(60, 60_000)),
     logout: chain(requireUser, limit(20, 60_000)),
   },
 };

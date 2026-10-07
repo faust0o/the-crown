@@ -79,6 +79,39 @@ export interface BookLevel {
   size: number;
 }
 
+/**
+ * A finished round: what it was, and how it ended.
+ *
+ * Deliberately without the book. `lines` are live prices on a race that is over,
+ * and nothing in the results panel or the replay reads them — while asking for
+ * them is what put the history query over the server's cost budget, so it was
+ * rejected before a resolver ran and the panel showed "no rounds" forever.
+ * `Round` extends this, so anything holding a live round can be replayed.
+ */
+export interface RoundResult {
+  id: string;
+  startsAt: string;
+  lockAt: string;
+  endsAt: string;
+  status: "OPEN" | "LOCKED" | "CUT" | "SETTLED";
+  commitHash: string;
+  seed: string | null;
+  cutAt: string | null;
+  cutWindowSeconds: number;
+  crownSymbol: string | null;
+  entries: ResultEntry[];
+}
+
+/** An entry as a finished round knows it: where it started, where it ended. */
+export interface ResultEntry {
+  symbol: string;
+  ticker: string;
+  imageUrl: string | null;
+  startRank: number;
+  cutRank: number | null;
+  isCrown: boolean;
+}
+
 export interface Round {
   id: string;
   startsAt: string;
@@ -111,6 +144,22 @@ export interface CryptoBet {
   /** What closing this position would pay right now; null once resolved. */
   liveValue: number | null;
   openedAt: string;
+}
+
+/**
+ * A sale of part or all of a position — what it would fetch, and what it did.
+ *
+ * One shape for the quote and the receipt because the server computes them with
+ * one function: the price depends on how much is being sold, so "what you would
+ * get" is not something the client can derive from a per-lot value.
+ */
+export interface CryptoSale {
+  /** Credits of position closed. Clamped to what is held. */
+  sold: number;
+  /** Credits returned for them. */
+  payout: number;
+  /** The price per share it leaves at, in cents. */
+  cents: number;
 }
 
 export interface OracleStatus {
@@ -286,23 +335,83 @@ export const ROUND_REPLAY: TypedDocumentNode<
   }
 `;
 
-/** Settled rounds, for the results + verification panel. */
-export const ROUNDS: TypedDocumentNode<{ cryptoRounds: Round[] }, { limit?: number }> = gql`
+/**
+ * Finished rounds, for the results + verification panel.
+ *
+ * Its own selection rather than `ROUND_FIELDS`, and the difference is the point:
+ * a finished round has no book, so it asks for no `lines`, no `liveVolume` and
+ * no `livePrice`. Twelve rounds of the full shape priced out at 44,621 against a
+ * budget of 5,000 — the server rejected the document during validation, Apollo
+ * handed back no data, and the panel said "no rounds have settled yet" whatever
+ * the database held. Asking for what the panel draws costs about a twentieth of
+ * that, and the fields it dropped were ones it never rendered.
+ */
+export const ROUNDS: TypedDocumentNode<
+  { cryptoRounds: RoundResult[] },
+  { limit?: number }
+> = gql`
   query CryptoRounds($limit: Int) {
-    cryptoRounds(limit: $limit) { ${ROUND_FIELDS} }
+    cryptoRounds(limit: $limit) {
+      id
+      startsAt
+      lockAt
+      endsAt
+      status
+      commitHash
+      seed
+      cutAt
+      cutWindowSeconds
+      crownSymbol
+      entries {
+        symbol
+        ticker
+        imageUrl
+        startRank
+        cutRank
+        isCrown
+      }
+    }
   }
 `;
 
-export const CASH_OUT: TypedDocumentNode<
-  { cashOutCryptoBet: CryptoBet },
-  { id: string }
+/**
+ * What selling `stake` credits of one line would fetch right now.
+ *
+ * Polled with the ticket open, and re-asked whenever the amount changes: closing
+ * walks the pool back down, so the price is a function of the size and only the
+ * server holds that curve. Deriving it here from each lot's `liveValue` would
+ * quote a number nobody could be paid — the exact mistake the server's own
+ * comments record having made once already.
+ */
+export const SELL_QUOTE: TypedDocumentNode<
+  { cryptoSellQuote: CryptoSale | null },
+  { symbol: string; direction: Direction; stake: number }
 > = gql`
-  mutation CashOutCryptoBet($id: ID!) {
-    cashOutCryptoBet(id: $id) {
-      id
-      status
+  query CryptoSellQuote($symbol: String!, $direction: RankDirection!, $stake: Int!) {
+    cryptoSellQuote(symbol: $symbol, direction: $direction, stake: $stake) {
+      sold
       payout
-      cutRank
+      cents
+    }
+  }
+`;
+
+/**
+ * Sell part or all of a position.
+ *
+ * Addressed by line — coin and direction — rather than by lot, because that is
+ * what a position is to the player holding it. Which rows the server takes it
+ * out of is bookkeeping, and it fills oldest first.
+ */
+export const SELL_POSITION: TypedDocumentNode<
+  { sellCryptoPosition: CryptoSale },
+  { symbol: string; direction: Direction; stake: number }
+> = gql`
+  mutation SellCryptoPosition($symbol: String!, $direction: RankDirection!, $stake: Int!) {
+    sellCryptoPosition(symbol: $symbol, direction: $direction, stake: $stake) {
+      sold
+      payout
+      cents
     }
   }
 `;

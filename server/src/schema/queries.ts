@@ -1,14 +1,14 @@
-import { extendType, floatArg, intArg, nonNull, stringArg } from "nexus";
+import { arg, extendType, floatArg, intArg, nonNull, stringArg } from "nexus";
 import type { CryptoBet, RankSample, Token } from "../generated/prisma";
 import { callerId } from "../context";
-import { botTape } from "../bots";
+import { orders } from "../orders";
 import { book } from "../market";
 import { toUserView } from "../views";
-import { CHAIN_MODE } from "../env";
-import { chainTape } from "../chain/tape";
 import { oracle, WINDOW_LABEL } from "../oracle/index";
 import { currentRound } from "../rounds";
 import { toRoundView, toCryptoBetView, liveRankOf } from "../crypto-views";
+import { quoteSale } from "../sell";
+import type { Direction } from "../market";
 
 /**
  * Clamp a caller-supplied count into a range we are willing to serve.
@@ -35,9 +35,10 @@ export const queries = extendType({
       type: "User",
       resolve: async (_root, _args, ctx) => {
         if (!ctx.userId) return null;
-        // Desks hold accounts but are not people. Nothing can mint a session for
-        // one, so this is belt and braces — but a bot account surfacing as the
-        // logged-in player is the kind of thing worth making impossible twice.
+        // The retired market-making desks hold accounts but are not people.
+        // Nothing can mint a session for one, so this is belt and braces — but a
+        // bot account surfacing as the logged-in player is the kind of thing
+        // worth making impossible twice.
         const user = await ctx.prisma.user.findFirst({
           where: { id: ctx.userId, isDesk: false },
         });
@@ -83,17 +84,21 @@ export const queries = extendType({
       resolve: (_root, args) => oracle.recentFlow(clampCount(args.limit, 40, 200), args.since ?? 0),
     });
 
-    /** Simulated desk activity, newest first. In-memory only — never persisted. */
-    t.nonNull.list.nonNull.field("botTape", {
-      type: "BotTrade",
+    /**
+     * Every bet placed and every position closed in the live round, newest
+     * first — the flow that is moving the board, since it is the only flow there
+     * is.
+     *
+     * Public, like the rest of the board. What it exposes is a pseudonymous
+     * handle against a bet in a play-money game, which is the same thing the
+     * board's prices already say in aggregate; a market whose participants can
+     * see the prices but not the trades is a worse market and not a more private
+     * one.
+     */
+    t.nonNull.list.nonNull.field("orders", {
+      type: "Order",
       args: { limit: intArg() },
-      // Whichever desks are actually trading. `botTape` groups Postgres rows,
-      // which the chain desks never write — so with the chain on it correctly
-      // returns nothing and the panel goes blank while the market runs.
-      resolve: (_root, args) =>
-        CHAIN_MODE === "on"
-          ? chainTape(clampCount(args.limit, 24, 120))
-          : botTape(clampCount(args.limit, 24, 120)),
+      resolve: (_root, args) => orders(clampCount(args.limit, 24, 120)),
     });
 
     t.nonNull.field("oracleStatus", {
@@ -112,6 +117,46 @@ export const queries = extendType({
       resolve: async () => {
         const round = await currentRound();
         return round ? toRoundView(round) : null;
+      },
+    });
+
+    /**
+     * What selling `stake` credits of one of my lines would fetch right now.
+     *
+     * Its own field rather than something the panel derives, because the price
+     * depends on the size: closing walks the pool back down, and a clip large
+     * enough to move it gets a worse average than the first credit out. The
+     * client cannot know that curve, and the last time it guessed — quoting the
+     * resting bid against a size-aware payout — the screen was reliably kinder
+     * than the wallet.
+     *
+     * Null when there is no position, no round, or no book on that line. The
+     * amount is clamped rather than refused: asking to sell more than is held
+     * sells all of it, which is what a Max button means.
+     */
+    t.field("cryptoSellQuote", {
+      type: "CryptoSale",
+      args: {
+        symbol: nonNull(stringArg()),
+        direction: nonNull(arg({ type: "RankDirection" })),
+        stake: nonNull(intArg()),
+      },
+      resolve: async (_root, args, ctx) => {
+        const round = await currentRound();
+        if (!round) return null;
+        const lots = await ctx.prisma.cryptoBet.findMany({
+          where: {
+            userId: callerId(ctx),
+            roundId: round.id,
+            symbol: args.symbol,
+            direction: args.direction,
+            status: "OPEN",
+            chainAddress: null,
+          },
+          orderBy: { openedAt: "asc" },
+        });
+        const quote = quoteSale(lots, args.symbol, args.direction as Direction, args.stake);
+        return quote ? { sold: quote.sold, payout: quote.payout, cents: quote.cents } : null;
       },
     });
 
@@ -137,12 +182,27 @@ export const queries = extendType({
         );
       },
     });
-    /** Recent rounds, newest first — powers the results/verification panel. */
+    /**
+     * Finished rounds, newest first — powers the results/verification panel.
+     *
+     * "Finished" means the cut was recorded, not that the payouts have landed.
+     * A round's result is the board at its cut instant; paying the bets on it is
+     * a separate job that can be slow, can be retried, and — when the chain is
+     * mirroring — can be stuck on something that has nothing to do with the
+     * race. Keying the history on `SETTLED` meant every one of those failures
+     * presented as "no rounds have settled yet", which is a claim about the
+     * game's history rather than about a payout queue.
+     *
+     * The live round is excluded for the same reason it always was: it has no
+     * result yet. That is now said in the `where` clause instead of being left
+     * to the client to filter out.
+     */
     t.nonNull.list.nonNull.field("cryptoRounds", {
       type: "Round",
       args: { limit: intArg() },
       resolve: async (_root, args, ctx) => {
         const rounds = await ctx.prisma.round.findMany({
+          where: { cutAt: { not: null } },
           orderBy: { startsAt: "desc" },
           take: clampCount(args.limit, 10, 50),
           include: { entries: true },

@@ -11,7 +11,7 @@ import {
   type Direction,
   type RoundBook,
 } from "./market";
-import { BOARD_SIZE, oracle, type Standing } from "./oracle/index";
+import { BOARD_SIZE, POOL, oracle, type Standing } from "./oracle/index";
 import type { CryptoBet, Round, RoundEntry } from "./generated/prisma";
 
 /**
@@ -41,6 +41,8 @@ function position(overrides: Partial<CryptoBet> = {}): CryptoBet {
     roundId: ROUND.id,
     // A Postgres-path position: the money is in the row, not in a program.
     chainAddress: null,
+    // A lot somebody placed, rather than a slice left by a partial sale.
+    parentId: null,
     symbol: "C5",
     ticker: "C5",
     direction: "LOWER",
@@ -99,24 +101,15 @@ function standing(symbol: string, rank: number): Standing {
   };
 }
 
-const print = (symbol: string, direction: Direction, cents: number) =>
-  record({
-    id: `${symbol}-${direction}-${cents}`,
-    at: Date.now(),
-    bot: "Test Desk",
-    symbol,
-    ticker: symbol,
-    imageUrl: null,
-    direction,
-    size: 5_000,
-    cents,
-  });
+const print = (symbol: string, direction: Direction) =>
+  record({ at: Date.now(), symbol, direction, size: 5_000 });
 
 beforeEach(() => {
   resetMarket();
   // A cold oracle by default, which is what most of these assume — and set
   // explicitly so that the one test which stands a board up cannot leak it into
-  // whatever runs next.
+  // whatever runs next. Untracked for the same reason.
+  oracle.track([]);
   oracle.seedForTest([]);
   openRound(ROUND);
 });
@@ -127,10 +120,13 @@ describe("a coin that has fallen off the board", () => {
     assert.equal(liveRankOf("C5", [standing("C5", 4)]), 4, "still on the board");
   });
 
-  it("values the position off the tape instead of showing nothing", () => {
-    // The desks mark a delisted coin's LOWER up to where the cut will put it.
-    print("C5", "LOWER", 92);
-    const bid = quoteCents("C5", "LOWER")!.bid;
+  it("values the position off the book instead of showing nothing", () => {
+    print("C5", "LOWER");
+    // The position's *own* bid, not the resting one. Closing walks the pool back
+    // down, so what a hundred credits fetch is a shade under the mark the board
+    // is showing — and the view has to quote the number the cash-out will
+    // actually pay, or it advertises a price nobody can get.
+    const bid = closeCents("C5", "LOWER", 100)!;
 
     const view = toCryptoBetView(position(), { rank: liveRankOf("C5", []) });
 
@@ -143,7 +139,7 @@ describe("a coin that has fallen off the board", () => {
   });
 
   it("can be closed — both of the cash-out's preconditions hold", () => {
-    print("C5", "LOWER", 92);
+    print("C5", "LOWER");
     // `cashOutCryptoBet` bails on a null standing or a line that isn't on the
     // book, then pays `closeValue` off `closeCents` at the position's own size.
     // Neither can come back null for a delisted coin now, and both sides agree.
@@ -168,7 +164,7 @@ describe("a coin that has fallen off the board", () => {
     // It survived because the two agree at small size: every position in the
     // tests above is 100 credits, which rounds to the same cent either way. Only
     // a position big enough to move the pool it is closing into shows it.
-    print("C5", "LOWER", 92);
+    print("C5", "LOWER");
     const rank = liveRankOf("C5", []);
     const big = { ...position(), stake: 50_000 };
 
@@ -223,6 +219,56 @@ describe("a coin that has fallen off the board", () => {
     assert.ok(row.livePrice > 0, `and a real price: ${row.livePrice}`);
   });
 
+  it("still reports it after it has fallen past the pool as well", () => {
+    // The board is ten and the ranking pool is a couple of dozen, and a coin
+    // that collapses out of the first usually keeps going. The pool was where
+    // the numbers came from, so this is where the row went back to reading
+    // "$0 · —" — on a coin the round is still scoring, still quoting a book on,
+    // and still holding positions in. The oracle watches the whole page the
+    // upstream sends, which is several times deeper than it ranks.
+    oracle.seedForTest([
+      ...Array.from({ length: POOL + 4 }, (_, i) => ({
+        symbol: `X${i + 1}`,
+        volume: 50_000 - i * 100,
+      })),
+      { symbol: "C5", volume: 900 },
+    ]);
+
+    const row = toRoundView(persisted(ROUND.endsAt)).entries.find((e) => e.symbol === "C5")!;
+
+    assert.ok(
+      !oracle.standings(POOL).some((s) => s.symbol === "C5"),
+      "precondition: it is past the pool, not merely off the board"
+    );
+    assert.equal(row.liveVolume, 900, "the volume that is the reason it fell");
+    assert.ok(row.livePrice > 0, `and a real price: ${row.livePrice}`);
+  });
+
+  it("ranks it by its volume when it has stopped qualifying to race", () => {
+    // The case that was actually happening. A coin does not have to be relegated
+    // to leave the board: failing an eligibility test did it too, and that is not
+    // an outcome the round is scored on — it is a liquidity reading that blinked.
+    // Measured on the live feed, a coin turning over $8.7m an hour reported $5
+    // of liquidity; later RDDT, second on the board by volume, read $240k
+    // against a $250k floor. Each was drawn last with the volume of a leader,
+    // and would have been scored last at the cut.
+    oracle.track(ROUND.entries.map((e) => e.symbol));
+    oracle.seedForTest([
+      // Busier than the whole board — and the seam takes rows busiest first.
+      { symbol: "C5", volume: 8_696_085, racing: false },
+      ...Array.from({ length: BOARD_SIZE }, (_, i) => ({
+        symbol: `X${i + 1}`,
+        volume: 5_000 - i * 100,
+      })),
+    ]);
+
+    const row = toRoundView(persisted(ROUND.endsAt)).entries.find((e) => e.symbol === "C5")!;
+
+    assert.equal(row.liveRank, 1, "it stands where its volume puts it");
+    assert.equal(row.liveVolume, 8_696_085, "and reports the volume that put it there");
+    assert.ok(row.livePrice > 0, `and priced: ${row.livePrice}`);
+  });
+
   it("reports no live rank once the round is over", () => {
     // A settled round in the results panel is a finished race. Reporting a
     // coin's standing in today's board as its rank in that one is worse than
@@ -232,7 +278,7 @@ describe("a coin that has fallen off the board", () => {
   });
 
   it("leaves a resolved position alone", () => {
-    print("C5", "LOWER", 92);
+    print("C5", "LOWER");
     const settled = toCryptoBetView(position({ status: "WON", payout: 250 }), {
       rank: liveRankOf("C5", []),
     });

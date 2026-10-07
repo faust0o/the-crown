@@ -80,26 +80,30 @@ export const FlowEvent = objectType({
 });
 
 /**
- * A print on the simulated bot tape.
+ * One real bet, as it happened.
  *
- * Decoration, not ledger: no user, no stored bet, no effect on settlement. The
- * client must label it as simulated so it can never be read as the real flow.
+ * Ledger, not decoration — this is a `CryptoBet` row, the same row settlement
+ * pays and the same credits that moved the price. It carries a handle because
+ * every participant in this market is a person; there is nothing else trading.
  */
-export const BotTrade = objectType({
-  name: "BotTrade",
+export const Order = objectType({
+  name: "Order",
   definition(t) {
     t.nonNull.id("id");
     t.nonNull.float("at");
-    /** Desk name, stable for the life of the process. */
-    t.nonNull.string("bot");
+    /** The bettor's pseudonymous handle. */
+    t.nonNull.string("handle");
     t.nonNull.string("symbol");
     t.nonNull.string("ticker");
     t.string("imageUrl");
     t.nonNull.field("direction", { type: "RankDirection" });
-    /** Shares changing hands. */
-    t.nonNull.int("size");
+    t.nonNull.field("kind", { type: "OrderKind" });
+    /** Credits staked on a BUY, credits returned on a SELL. */
+    t.nonNull.int("credits");
     /** Price per share in cents, on the same scale as RankLine.cents. */
     t.nonNull.int("cents");
+    /** Profit or loss against the stake, on a SELL only. */
+    t.int("pnl");
   },
 });
 
@@ -207,6 +211,27 @@ export const CryptoBet = objectType({
     /** What closing this position would pay right now; null once resolved. */
     t.int("liveValue");
     t.nonNull.field("openedAt", { type: "DateTime" });
+  },
+});
+
+/**
+ * A sale of part or all of a position — quoted, or done.
+ *
+ * One type for both because they have to be the same three numbers. The panel
+ * asks what selling would fetch and the mutation says what it fetched, and the
+ * moment those are two shapes they become two calculations that can disagree —
+ * which is exactly the bug `crypto-views.ts` documents, where the screen quoted
+ * the resting bid and the payout used the size-aware one.
+ */
+export const CryptoSale = objectType({
+  name: "CryptoSale",
+  definition(t) {
+    /** Credits of position closed. Never more than is held. */
+    t.nonNull.int("sold");
+    /** Credits returned for them. */
+    t.nonNull.int("payout");
+    /** The price per share it leaves at, in cents. */
+    t.nonNull.int("cents");
   },
 });
 

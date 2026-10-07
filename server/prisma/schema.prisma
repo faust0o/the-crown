@@ -185,6 +185,19 @@ model CryptoBet {
   payout     Int           @default(0)
   openedAt   DateTime      @default(now())
   resolvedAt DateTime?
+  /// The lot this row was carved out of, when a position was sold in part.
+  ///
+  /// Selling part of a lot shrinks it and writes the slice that left as its own
+  /// CASHED_OUT row: its own size, its own exit price, its own moment. A sale is
+  /// a trade, and a trade is a row — a column that recorded the last one would
+  /// lose every sale before it, and the orders feed would have to invent a
+  /// single price for what were several.
+  ///
+  /// Null on a bet somebody placed, which is what the orders feed reads: a slice
+  /// prints the SELL it is, and printing a BUY for it too would report a
+  /// purchase nobody ever made. Deliberately a plain id and not a relation —
+  /// nothing traverses it, and a cascade on it would delete history.
+  parentId   String?
 
   @@index([userId, status])
   @@index([roundId])
