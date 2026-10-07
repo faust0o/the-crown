@@ -1,7 +1,7 @@
+import { Empty, Readout, Section, TONE_COLOR, type Tone } from "../ui";
 import { CoinIcon } from "./CoinIcon";
 import type { CryptoBet, Direction, Standing } from "./graphql";
 import { TopUpCard } from "./TopUp";
-import { Empty, Readout, Section, TONE_COLOR, type Tone } from "../ui";
 
 const TONE: Record<Direction, { label: string; tone: Tone }> = {
   HIGHER: { label: "Higher", tone: "up" },
@@ -36,7 +36,7 @@ export function Portfolio({
   const net = done.reduce((n, b) => n + b.payout - b.stake, 0);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 max-w-[60ch] mx-auto">
       {/*
         First thing on the page, above the numbers it changes. A player opening
         the portfolio is either checking what they have or adding to it, and the

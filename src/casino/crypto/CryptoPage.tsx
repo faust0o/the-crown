@@ -28,8 +28,8 @@ import { PreviousRounds } from "./PreviousRounds";
 import { RankBoard } from "./RankBoard";
 import { RoundClock } from "./RoundClock";
 import { RoundReplay } from "./RoundReplay";
-import { VolumeChart } from "./VolumeChart";
 import { useSignInPrompt } from "./useSignIn";
+import { VolumeChart } from "./VolumeChart";
 import { SignInButton, WalletButton } from "./WalletButton";
 
 /** Matches the oracle's own re-rank cadence — no point polling faster. */
@@ -390,9 +390,6 @@ function CrownInner() {
             <span className="flex flex-col leading-tight">
               <span className="mat-engrave text-lg font-semibold text-foreground">
                 The Crown
-              </span>
-              <span className="hidden text-xs text-muted sm:block">
-                ten trending assets, one ranking
               </span>
             </span>
           </a>

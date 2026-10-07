@@ -1,13 +1,13 @@
+import type { LivelinePoint, LivelineSeries } from "liveline";
+import { Liveline } from "liveline";
 import { useCallback, useMemo, useState } from "react";
 import { useColorScheme } from "../theme";
+import { lineIcon } from "./lineIcon";
 import { proxied } from "./proxied";
 import { fallbackColor, useIconColors } from "./useIconColors";
-import { lineIcon } from "./lineIcon";
-import { Liveline } from "liveline";
-import type { LivelinePoint, LivelineSeries } from "liveline";
 
-import type { RankPoint, Standing } from "./graphql";
 import { Section } from "../ui";
+import type { RankPoint, Standing } from "./graphql";
 
 
 const formatValue = (v: number) => `${v.toFixed(1)}%`;
@@ -134,7 +134,7 @@ export function VolumeChart({
   }, [history, standings, iconColors, hidden, shift]);
 
   return (
-    <Section title="Volume race">
+    <Section title="Volume Chart">
       <div
         className="h-[320px] min-h-0"
         role="img"

@@ -1,21 +1,21 @@
-import { useMemo } from "react";
 import { useQuery } from "@apollo/client/react";
+import { useMemo } from "react";
 import { formatCompact } from "../format";
+import { Button, Empty, Section, Tag } from "../ui";
 import { CoinIcon } from "./CoinIcon";
 import { FlowFeed } from "./FlowFeed";
-import { useRoundVerification } from "./verify";
-import { VolumeChart } from "./VolumeChart";
-import { Button, Empty, Section, Tag } from "../ui";
 import {
   ROUND_REPLAY,
   type CryptoBet,
   type Direction,
-  type ResultEntry,
   type FlowEvent,
   type RankPoint,
+  type ResultEntry,
   type RoundResult,
   type Standing,
 } from "./graphql";
+import { useRoundVerification } from "./verify";
+import { VolumeChart } from "./VolumeChart";
 
 const TONE: Record<Direction, { label: string; color: string }> = {
   HIGHER: { label: "Higher", color: "var(--up)" },
@@ -196,7 +196,7 @@ export function RoundReplay({
           {chartHistory.length ? (
             <VolumeChart history={chartHistory} standings={asStandings} window="round" replay />
           ) : (
-            <Section title="Volume race">
+            <Section title="Volume Chart">
               <Empty>
                 {loading ? "loading the round…" : "No samples were recorded for this round."}
               </Empty>
