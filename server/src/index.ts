@@ -25,7 +25,7 @@ import { startRoundLoop, stopRoundLoop } from "./rounds";
 import { startSessionSweep, stopSessionSweep } from "./sessions";
 import { schema } from "./schema/index";
 import { costLimit, depthLimit } from "./schema/limits";
-import { CLIENT_DIR, hasClientBuild, serveClient } from "./static";
+import { CLIENT_DIR, DEV_CLIENT_URL, hasClientBuild, serveClient } from "./static";
 
 /**
  * What a client is allowed to learn from a failed request.
@@ -198,7 +198,9 @@ async function main() {
     });
 
   console.log(`👑  The Crown API ready at http://localhost:${PORT}/graphql`);
-  if (hasClientBuild()) {
+  if (DEV_CLIENT_URL) {
+    console.log(`🌐  Website (Vite, live) at ${DEV_CLIENT_URL}`);
+  } else if (hasClientBuild()) {
     console.log(`🌐  Website ready at http://localhost:${PORT}/`);
   } else {
     console.warn(

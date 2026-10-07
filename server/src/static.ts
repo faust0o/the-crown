@@ -15,6 +15,15 @@ const INDEX_HTML = path.join(CLIENT_DIR, "index.html");
 
 export const hasClientBuild = () => existsSync(INDEX_HTML);
 
+/**
+ * Vite, when `bun dev` is running it beside this server.
+ *
+ * Set, a page asked of this server is sent there instead of to `dist/` — which
+ * in dev is whatever was last built, never the code being edited, and looks
+ * enough like the live site that nothing says it is stale.
+ */
+export const DEV_CLIENT_URL = process.env.DEV_CLIENT_URL || null;
+
 const HAS_EXTENSION = /\.[a-z0-9]+$/i;
 
 /**
@@ -25,6 +34,14 @@ const HAS_EXTENSION = /\.[a-z0-9]+$/i;
  * immutable; the HTML itself must always be revalidated.
  */
 export function serveClient(app: Express): void {
+  if (DEV_CLIENT_URL) {
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      if (req.method !== "GET" && req.method !== "HEAD") return next();
+      res.redirect(302, new URL(req.originalUrl, DEV_CLIENT_URL).toString());
+    });
+    return;
+  }
+
   app.use(
     "/assets",
     express.static(path.join(CLIENT_DIR, "assets"), {

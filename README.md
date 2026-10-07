@@ -46,15 +46,21 @@ opened and every position closed this round, off the `CryptoBet` rows themselves
 
 ```sh
 bun install
-bun run server:prepare   # install server/ deps + generate the Prisma client
-bun run dev:server       # GraphQL on :4000
-bun run dev              # Vite on :5173, proxies /graphql to :4000
+bun dev                  # the whole stack: GraphQL on :4000, Vite on :5173
 ```
+
+`bun dev` runs `server:prepare`, applies pending migrations to the database in
+`server/.env` (`prisma migrate deploy` — never `migrate dev`, which can offer to
+reset it), then runs the API and Vite side by side; Ctrl-C stops both. Open
+:5173 — under `bun dev` a page asked of :4000 is redirected there, since what
+:4000 would otherwise serve is `dist/`, the last build, not the code. Postgres
+itself is yours to have running. `dev:server` and `dev:client` start either half
+on its own.
 
 `server/` is a separate package with its own `package.json` and lockfile, so a
 root `bun install` does not reach it — and the Prisma client it imports is
-generated, not committed. `server:prepare` covers both; run it again after
-changing `server/prisma/schema.prisma` or `server/package.json`.
+generated, not committed. `server:prepare` covers both, which is why `bun dev`
+runs it every time.
 
 **Login is your wallet.** Connect Phantom or Solflare and sign the sentence the
 server hands back — `walletChallenge` issues a single-use nonce,

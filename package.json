@@ -4,8 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "bun run server:prepare && bun run dev:migrate && DEV_CLIENT_URL=http://localhost:5173 bun run --parallel dev:server dev:client",
+    "dev:client": "vite --strictPort",
     "dev:server": "cd server && bun run dev",
+    "dev:migrate": "cd server && bun run migrate:deploy",
     "build": "tsc -b && vite build && node scripts/prerender.mjs",
     "lint": "eslint .",
     "server:prepare": "cd server && bun install --frozen-lockfile && bun run prisma:generate",
