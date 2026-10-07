@@ -96,21 +96,32 @@ function RankRow({
   // the bet actually resolves on, not the 60s-ago rank.
   const from = entry?.startRank ?? s.previousRank;
   const delta = from == null ? 0 : from - s.rank;
+  // The crown and a coin that arrived mid-round have no book, so their rows are
+  // not a control at all — the right-hand column already says why.
+  const selectable = Boolean(entry && !entry.isCrown);
 
   return (
     <li
-      role="button"
-      tabIndex={0}
-      aria-pressed={selected}
-      onClick={() => onSelect(s.symbol)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onSelect(s.symbol);
-        }
-      }}
-      className={`absolute inset-x-0 flex cursor-pointer items-center gap-3 overflow-hidden rounded-lg px-2 ${
-        selected ? "mat-row-on" : "hover:bg-[color-mix(in_oklch,var(--foreground)_4%,transparent)]"
+      role={selectable ? "button" : undefined}
+      tabIndex={selectable ? 0 : undefined}
+      aria-pressed={selectable ? selected : undefined}
+      onClick={selectable ? () => onSelect(s.symbol) : undefined}
+      onKeyDown={
+        selectable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSelect(s.symbol);
+              }
+            }
+          : undefined
+      }
+      className={`absolute inset-x-0 flex items-center gap-3 overflow-hidden rounded-lg px-2 ${
+        selected
+          ? "mat-row-on cursor-pointer"
+          : selectable
+            ? "cursor-pointer hover:bg-[color-mix(in_oklch,var(--foreground)_4%,transparent)]"
+            : ""
       }`}
       style={{
         height: ROW_H - 4,

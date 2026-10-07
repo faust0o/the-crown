@@ -1,9 +1,10 @@
 import { useQuery } from "@apollo/client/react";
 import { useMemo } from "react";
 import { formatCompact } from "../format";
-import { Button, Empty, Section, Tag } from "../ui";
+import { Button, Empty, IconButton, Section, Tag } from "../ui";
 import { CoinIcon } from "./CoinIcon";
 import { FlowFeed } from "./FlowFeed";
+import { GameStats, type Mover } from "./GameStats";
 import {
   ROUND_REPLAY,
   type CryptoBet,
@@ -185,6 +186,22 @@ export function RoundReplay({
     [finished, meta, cutVolume]
   );
 
+  // The live board's stats, as the round finished: open to cut, and the
+  // volume at the last sample. A coin with no cut is counted where it opened.
+  const movers = useMemo<Mover[]>(
+    () =>
+      finished.map((e) => ({
+        symbol: e.symbol,
+        ticker: e.ticker,
+        imageUrl: meta.get(e.symbol)?.imageUrl ?? null,
+        from: e.startRank,
+        to: e.cutRank ?? e.startRank,
+        volume: cutVolume.get(e.symbol) ?? 0,
+      })),
+    [finished, meta, cutVolume]
+  );
+  const stats = <GameStats movers={movers} />;
+
   const flow = useMemo(() => flowFrom(history, meta), [history, meta]);
 
   return (
@@ -194,9 +211,18 @@ export function RoundReplay({
       <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
         <div className="flex min-w-0 flex-col gap-5">
           {chartHistory.length ? (
-            <VolumeChart history={chartHistory} standings={asStandings} window="round" replay />
+            // Keyed so picking another round from the list remounts it: a
+            // paused chart holds the data it first drew, and its clock with it.
+            <VolumeChart
+              key={round.id}
+              title={stats}
+              history={chartHistory}
+              standings={asStandings}
+              window="round"
+              replay
+            />
           ) : (
-            <Section title="Volume Chart">
+            <Section title={stats}>
               <Empty>
                 {loading ? "loading the round…" : "No samples were recorded for this round."}
               </Empty>
@@ -238,6 +264,58 @@ function ReplayBar({
       <Button size="sm" onClick={onExit} className="ml-auto">
         {justEnded ? "Go to the new round" : "Back to the live round"}
       </Button>
+    </div>
+  );
+}
+
+/**
+ * The round that just settled, announced over the live board.
+ *
+ * It used to take the board over outright — the next round was already running
+ * and the page froze on the last one's numbers. Now the board stays live and the
+ * finished round is one press away, with the one fact most people want from it
+ * on the bar itself.
+ */
+export function RoundOverBar({
+  round,
+  onOpen,
+  onDismiss,
+}: {
+  round: RoundResult;
+  onOpen: () => void;
+  onDismiss: () => void;
+}) {
+  const winner = round.entries.find((e) => e.cutRank === 1) ?? null;
+
+  return (
+    <div className="casino-animate-in flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-hairline pb-3">
+      <Tag tone="gold">round over</Tag>
+      <span className="font-mono text-sm tabular-nums text-foreground">
+        {hhmm(round.startsAt)} – {hhmm(round.endsAt)}
+      </span>
+      {winner ? (
+        <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted">
+          <CoinIcon ticker={winner.ticker} src={winner.imageUrl} size={18} />
+          <span className="font-semibold text-foreground">{winner.ticker}</span> took the crown
+        </span>
+      ) : (
+        <span className="text-xs text-muted">No cut was recorded for that round.</span>
+      )}
+      <span className="ml-auto flex items-center gap-2">
+        <Button size="sm" onClick={onOpen}>
+          See how it finished
+        </Button>
+        <IconButton label="Dismiss" size="sm" onClick={onDismiss}>
+          <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true" fill="none">
+            <path
+              d="M7 7l10 10M17 7L7 17"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
+          </svg>
+        </IconButton>
+      </span>
     </div>
   );
 }

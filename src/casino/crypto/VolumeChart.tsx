@@ -1,10 +1,10 @@
 import type { LivelinePoint, LivelineSeries } from "liveline";
 import { Liveline } from "liveline";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useColorScheme } from "../theme";
 import { lineIcon } from "./lineIcon";
 import { proxied } from "./proxied";
-import { fallbackColor, useIconColors } from "./useIconColors";
+import { fallbackColor, legibleOn, useIconColors } from "./useIconColors";
 
 import { Section } from "../ui";
 import type { RankPoint, Standing } from "./graphql";
@@ -25,11 +25,14 @@ const formatValue = (v: number) => `${v.toFixed(1)}%`;
  * the leader is the primary so the badge tracks whoever wears the crown.
  */
 export function VolumeChart({
+  title,
   history,
   standings,
   window,
   replay = false,
 }: {
+  /** The caption row. The page sets the round's stats there — see `GameStats`. */
+  title: ReactNode;
   history: RankPoint[];
   standings: Standing[];
   window: string;
@@ -44,10 +47,18 @@ export function VolumeChart({
   // off the plot entirely. Sliding the whole series forward until its last
   // sample lands on "now" makes the round fill the chart; `formatTime` takes the
   // shift back off so the axis still reads the hours the race actually ran.
+  //
+  // "Now" for a replay is the instant it opened, and stays that. The chart is
+  // paused from its first frame, so liveline's clock stops there too — left
+  // running, every line went on drawing flat past the cut and the round slid
+  // off the left edge. Anything measured against the clock has to use this
+  // same instant, or a rerun of the memo would move it out from under the
+  // frozen plot.
+  const [openedAt] = useState(() => Date.now());
   const shift = useMemo(() => {
     if (!replay || !history.length) return 0;
-    return Date.now() - Math.max(...history.map((p) => p.t));
-  }, [replay, history]);
+    return openedAt - Math.max(...history.map((p) => p.t));
+  }, [replay, history, openedAt]);
 
   const formatTime = useCallback(
     (t: number) =>
@@ -107,8 +118,9 @@ export function VolumeChart({
       data: hidden.has(s.symbol) ? [] : (bySymbol.get(s.symbol) ?? []),
       value: liveTotal > 0 ? (100 * s.quoteVolume) / liveTotal : 0,
       // The line takes the logo's own colour, so a series is identifiable
-      // against the row it belongs to rather than by legend order.
-      color: iconColors.get(proxied(s.imageUrl) ?? "") ?? fallbackColor(s.symbol),
+      // against the row it belongs to rather than by legend order — lightened
+      // when that colour is too dark to see on the dark theme.
+      color: legibleOn(scheme, iconColors.get(proxied(s.imageUrl) ?? "") ?? fallbackColor(s.symbol)),
       // Still feeds the scrub tooltip and the legend.
       label: s.ticker,
       // Drawn at the line's end in place of the ticker. liveline reserves room
@@ -124,17 +136,18 @@ export function VolumeChart({
     // chart. Matching the window to the data keeps the line spanning the
     // container edge to edge, always continuous.
     const times = history.map((p) => p.t + shift);
-    const spanMs = times.length ? Date.now() - Math.min(...times) : 0;
+    const now = replay ? openedAt : Date.now();
+    const spanMs = times.length ? now - Math.min(...times) : 0;
     return {
       primary: lead?.data ?? [],
       series: built,
       value: lead?.value ?? 0,
       spanSecs: Math.max(60, Math.ceil(spanMs / 1000)),
     };
-  }, [history, standings, iconColors, hidden, shift]);
+  }, [history, standings, iconColors, hidden, shift, scheme, replay, openedAt]);
 
   return (
-    <Section title="Volume Chart">
+    <Section title={title}>
       <div
         className="h-[320px] min-h-0"
         role="img"
@@ -157,6 +170,8 @@ export function VolumeChart({
           fill={false}
           scrub
           onSeriesToggle={onSeriesToggle}
+          // A finished round is drawn once and held — see `openedAt`.
+          paused={replay}
           window={spanSecs}
           emptyText="collecting…"
           formatValue={formatValue}

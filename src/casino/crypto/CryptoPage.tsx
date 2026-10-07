@@ -12,6 +12,7 @@ import {
 import { BetPanel } from "./BetPanel";
 import { BetResult } from "./BetResult";
 import { FlowFeed } from "./FlowFeed";
+import { GameStats, type Mover } from "./GameStats";
 import {
   BOARD,
   PLACE_BET,
@@ -27,7 +28,7 @@ import { Portfolio } from "./Portfolio";
 import { PreviousRounds } from "./PreviousRounds";
 import { RankBoard } from "./RankBoard";
 import { RoundClock } from "./RoundClock";
-import { RoundReplay } from "./RoundReplay";
+import { RoundOverBar, RoundReplay } from "./RoundReplay";
 import { useSignInPrompt } from "./useSignIn";
 import { VolumeChart } from "./VolumeChart";
 import { SignInButton, WalletButton } from "./WalletButton";
@@ -101,13 +102,13 @@ function CrownInner() {
   // A settled round — picked out of the list, or the one they were just
   // watching. Either way the board tab replays it until they come back.
   // `RoundResult`, not `Round`: a replay is drawn from a finished round's
-  // results, and the history panel hands over exactly those. A live round
-  // satisfies it too, which is what lets the round that just ended slide
-  // straight into the replay.
+  // results, and the history panel hands over exactly those.
   const [replay, setReplay] = useState<RoundResult | null>(null);
   const [replayIsFresh, setReplayIsFresh] = useState(false);
   /** The round that ended under the player, waiting on its settlement. */
   const [ended, setEnded] = useState<string | null>(null);
+  /** That round once settled, offered from the live board rather than replacing it. */
+  const [justSettled, setJustSettled] = useState<RoundResult | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [direction, setDirection] = useState<Direction>("HIGHER");
   const [busy, setBusy] = useState(false);
@@ -143,8 +144,10 @@ function CrownInner() {
   const round = data?.cryptoRound ?? null;
   const status = data?.oracleStatus;
 
-  // Hand the player the replay of the round they were just watching, rather
-  // than rolling them silently into the next one.
+  // Tell the player the round they were just watching has settled, rather than
+  // rolling them silently into the next one — but over the live board, not in
+  // place of it. It used to switch straight into the replay, which froze the
+  // page on the old round's numbers while the next one was already trading.
   //
   // The trigger is the live round's id changing: rounds are back-to-back, so
   // the next one opens within a tick of the old one ending. Waiting for the
@@ -168,18 +171,13 @@ function CrownInner() {
   });
   useEffect(() => {
     if (!ended) return;
-    if (replay) {
-      setEnded(null); // already reading some other round — don't yank them out of it
-      return;
-    }
     const settled = (recent?.cryptoRounds ?? []).find(
       (r) => r.id === ended && r.status === "SETTLED"
     );
     if (!settled) return;
-    setReplay(settled);
-    setReplayIsFresh(true);
+    setJustSettled(settled);
     setEnded(null);
-  }, [ended, replay, recent]);
+  }, [ended, recent]);
   useEffect(() => {
     if (!ended) return;
     const timer = setTimeout(() => setEnded(null), 120_000);
@@ -213,8 +211,8 @@ function CrownInner() {
    *
    * A coin that trended in after the round opened is the mirror case and belongs
    * here too, but as a spectator — the row explains it is in from the next round
-   * and carries no book. Only the chart excludes it, because a line drawn in a
-   * race the coin is not running is a claim rather than a caption.
+   * and carries no book. The chart draws its line from the poll it arrives on,
+   * so the picture over the board never leaves out a row the board is showing.
    *
    * Between rounds there is no field, and the live board is all there is.
    */
@@ -247,6 +245,23 @@ function CrownInner() {
     return [...inRound, ...newcomers].sort((a, b) => a.rank - b.rank);
   }, [round, standings]);
   const allBets = useMemo(() => data?.myCryptoBets ?? [], [data?.myCryptoBets]);
+
+  // The game, for the stats over the chart: the round's own coins, measured
+  // from where each opened. A coin that trended in since is not in this race,
+  // so its volume is not in the race's total. Between rounds the board is all
+  // there is, and nothing has moved yet.
+  const movers = useMemo<Mover[]>(
+    () =>
+      (entries.size ? field.filter((s) => entries.has(s.symbol)) : field).map((s) => ({
+        symbol: s.symbol,
+        ticker: s.ticker,
+        imageUrl: s.imageUrl,
+        from: entries.get(s.symbol)?.startRank ?? s.rank,
+        to: s.rank,
+        volume: s.quoteVolume,
+      })),
+    [field, entries]
+  );
 
   // Credits come from the polled query, not the session's one-shot ME — the
   // balance changes server-side the moment a round settles, and reading it from
@@ -294,8 +309,33 @@ function CrownInner() {
    */
   const disabledReason = open ? null : "Betting is closed for this round.";
 
-  // Default the ticket to whoever leads, so the panel is never empty.
-  const activeSymbol = selected ?? field[0]?.symbol ?? null;
+  /**
+   * Whether a coin can be backed this round — and so whether it can be picked.
+   *
+   * Two rows on the board can't: the coin wearing the crown, which has no book,
+   * and a coin that trended in after the open, which is only in from the next
+   * round. Both used to take a click and fill the ticket with a coin it could do
+   * nothing with, and the crown, standing first, was what the ticket opened on.
+   */
+  const bettable = useCallback(
+    (symbol: string) => {
+      const entry = entries.get(symbol);
+      return Boolean(entry && !entry.isCrown);
+    },
+    [entries]
+  );
+
+  // Open the ticket on the first coin that can be backed, then keep it there:
+  // following the board instead swapped the coin out from under a stake being
+  // typed whenever two rows traded places. A pick the round stops offering —
+  // the coin took the crown, or is not in the next round — falls back the same
+  // way. Set during render, not in an effect, so the ticket never draws the old
+  // coin first.
+  const activeSymbol =
+    selected && bettable(selected)
+      ? selected
+      : (field.find((s) => bettable(s.symbol))?.symbol ?? null);
+  if (activeSymbol && activeSymbol !== selected) setSelected(activeSymbol);
   const activeStanding = field.find((s) => s.symbol === activeSymbol) ?? null;
   const activeEntry = activeSymbol ? (entries.get(activeSymbol) ?? null) : null;
   const activeBets = roundBets.filter((b) => b.symbol === activeSymbol);
@@ -312,10 +352,14 @@ function CrownInner() {
    */
   const charged = (credits ?? 0) > 0 || roundBets.some((b) => b.status === "OPEN");
 
-  const onSelect = useCallback((symbol: string, dir?: Direction) => {
-    setSelected(symbol);
-    if (dir) setDirection(dir);
-  }, []);
+  const onSelect = useCallback(
+    (symbol: string, dir?: Direction) => {
+      if (!bettable(symbol)) return;
+      setSelected(symbol);
+      if (dir) setDirection(dir);
+    },
+    [bettable]
+  );
 
   const onPlace = useCallback(
     async (stake: number) => {
@@ -468,70 +512,84 @@ function CrownInner() {
             onExit={() => setReplay(null)}
           />
         ) : (
-          <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
-            <div className="flex min-w-0 flex-col gap-5">
-              <VolumeChart
-                history={data?.cryptoRankHistory ?? []}
-                standings={field}
-                window={status?.window ?? "1h"}
+          <div className="flex flex-col gap-5">
+            {justSettled && (
+              <RoundOverBar
+                round={justSettled}
+                onOpen={() => {
+                  setReplay(justSettled);
+                  setReplayIsFresh(true);
+                  setJustSettled(null);
+                }}
+                onDismiss={() => setJustSettled(null)}
               />
-              {loading && !field.length ? (
-                <p className="px-2 py-8 text-center text-sm text-muted">
-                  seeding the trailing-volume window…
-                </p>
-              ) : (
-                <RankBoard
+            )}
+            <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
+              <div className="flex min-w-0 flex-col gap-5">
+                <VolumeChart
+                  title={<GameStats movers={movers} />}
+                  history={data?.cryptoRankHistory ?? []}
                   standings={field}
-                  entries={entries}
-                  selected={activeSymbol}
-                  onSelect={onSelect}
+                  window={status?.window ?? "1h"}
                 />
-              )}
-            </div>
+                {loading && !field.length ? (
+                  <p className="px-2 py-8 text-center text-sm text-muted">
+                    seeding the trailing-volume window…
+                  </p>
+                ) : (
+                  <RankBoard
+                    standings={field}
+                    entries={entries}
+                    selected={activeSymbol}
+                    onSelect={onSelect}
+                  />
+                )}
+              </div>
 
-            <div className="flex min-w-0 flex-col gap-5">
-              {/*
-                Always up for a visitor; withheld from an account with nothing
-                to spend — see `charged`.
+              <div className="flex min-w-0 flex-col gap-5">
+                {/*
+                  Always up for a visitor; withheld from an account with nothing
+                  to spend — see `charged`.
 
-                Those look like the same case and are opposites. A signed-in
-                player with no balance and no position has already been let in
-                and has nothing the panel can do for them: every control is
-                live, the stake chips add up, and the only thing that says it
-                will not work is a refusal on the key at the end. Withholding it
-                puts what they need next — the wallet — directly under the
-                board.
+                  Those look like the same case and are opposites. A signed-in
+                  player with no balance and no position has already been let in
+                  and has nothing the panel can do for them: every control is
+                  live, the stake chips add up, and the only thing that says it
+                  will not work is a refusal on the key at the end. Withholding it
+                  puts what they need next — the wallet — directly under the
+                  board.
 
-                A signed-out visitor is the reverse. The prices are the product,
-                composing a bet is how they decide they want one, and the Buy key
-                is the door. Hiding the ticket hid the entire reason to sign in
-                behind having signed in.
-              */}
-              {(!user || charged) && (
-                <BetPanel
-                  standing={activeStanding}
-                  entry={activeEntry}
-                  bets={activeBets}
-                  roundOpen={open}
-                  signedIn={Boolean(user)}
-                  disabledReason={disabledReason}
-                  direction={direction}
-                  onDirection={setDirection}
-                  busy={busy}
-                  credits={credits}
-                  onPlace={onPlace}
-                  onSell={onSellPosition}
-                  selling={selling}
-                />
-              )}
-              {/*
-                Under the ticket, but only once the player has traded this
-                round. Before that the room's orders are someone else's game,
-                and the empty feed took the spot right under the ticket from
-                panels that had something to say.
-              */}
-              {roundBets.length > 0 && <Orders onSelect={onSelect} />}
-              <FlowFeed events={roundFlow} status={error ? "error" : status?.status} />
+                  A signed-out visitor is the reverse. The prices are the product,
+                  composing a bet is how they decide they want one, and the Buy key
+                  is the door. Hiding the ticket hid the entire reason to sign in
+                  behind having signed in.
+                */}
+                {(!user || charged) && (
+                  <BetPanel
+                    standing={activeStanding}
+                    entry={activeEntry}
+                    bets={activeBets}
+                    roundOpen={open}
+                    signedIn={Boolean(user)}
+                    disabledReason={disabledReason}
+                    direction={direction}
+                    onDirection={setDirection}
+                    busy={busy}
+                    credits={credits}
+                    onPlace={onPlace}
+                    onSell={onSellPosition}
+                    selling={selling}
+                  />
+                )}
+                {/*
+                  Under the ticket, but only once the player has traded this
+                  round. Before that the room's orders are someone else's game,
+                  and the empty feed took the spot right under the ticket from
+                  panels that had something to say.
+                */}
+                {roundBets.length > 0 && <Orders onSelect={onSelect} />}
+                <FlowFeed events={roundFlow} status={error ? "error" : status?.status} />
+              </div>
             </div>
           </div>
         )}
