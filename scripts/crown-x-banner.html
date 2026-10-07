@@ -1,0 +1,525 @@
+<!doctype html>
+<!--
+  Source for public/crown-x-banner.png — the profile header on X.
+
+  Rendered with headless Chrome at 2x and downscaled, so the type and the dot
+  grille stay crisp:
+
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+      --headless --disable-gpu --hide-scrollbars --virtual-time-budget=4000 \
+      --window-size=1500,500 --force-device-scale-factor=2 \
+      --screenshot=/tmp/crown-x-banner@2x.png "file://$PWD/scripts/crown-x-banner.html"
+    sips -z 500 1500 /tmp/crown-x-banner@2x.png --out public/crown-x-banner.png
+
+  1500x500 is X's header, and it is shown uncropped at 3:1 — but the avatar
+  hangs over the bottom-left corner, roughly x 0-390 / y 330-500 in these
+  coordinates. Nothing that has to be read lives there: the lockup sits above
+  it and the URL sits opposite it.
+
+  The picture is the app's own materials rather than a poster made of the same
+  colours: a dark anodised face, walnut rails top and bottom, and a lamp behind
+  a perforated panel. The crown is not drawn — it is the shape the perforations
+  take when the lamp behind them is lit, so the halftone is the image and the
+  gradient is the light making it. Dot radius follows the field's luminance, so
+  the mark resolves out of the grille the way a dot-matrix display does.
+
+  The mark, the tokens and the material recipes are copied from the app by hand
+  (public/crown-icon.svg, the dark block in src/index.css) — the values below
+  are oklch tokens converted to sRGB, since this file has no build step. Keep
+  them in sync when the palette moves.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 1500px;
+        height: 500px;
+        background: #151210;
+      }
+      body {
+        /* Same stack as src/index.css. */
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .banner {
+        position: relative;
+        width: 1500px;
+        height: 500px;
+        overflow: hidden;
+        /* The face: dark anodised aluminium, lit from above. */
+        background-image: linear-gradient(180deg, #201d1a, #141210 62%, #100e0c);
+      }
+      .banner > * {
+        position: absolute;
+        inset: 0;
+      }
+
+      /*
+       * The lamp, under the grille.
+       *
+       * Two bloom layers: the amber one is the light the dots are showing, and
+       * the far cooler one at the lower left is the blue side of the app's
+       * money pair — enough to keep the face from being one hue, not enough to
+       * read as a second light source.
+       */
+      .bloom {
+        background-image:
+          radial-gradient(46% 84% at 74.5% 44%, rgba(250, 138, 11, 0.3) 0%, rgba(237, 111, 0, 0.12) 42%, transparent 74%),
+          radial-gradient(38% 70% at 18% 96%, rgba(86, 170, 251, 0.11) 0%, transparent 70%);
+      }
+
+      /* The perforated panel itself, painted in script below. */
+      #grille {
+        width: 1500px;
+        height: 500px;
+      }
+
+      /*
+       * The lamp does not reach the left of the case, and the lockup needs a
+       * ground rather than a field of dots behind the type. Same darkening a
+       * shade further from the light would give.
+       */
+      .shade {
+        background-image: radial-gradient(
+          52% 74% at 22% 42%,
+          rgba(16, 14, 12, 0.9) 0%,
+          rgba(16, 14, 12, 0.62) 46%,
+          transparent 78%
+        );
+      }
+
+      /* Machined tooth across the face — visible on the panel, not on the type. */
+      .brush {
+        background-image: repeating-linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.014) 0 1px,
+          transparent 1px 3px
+        );
+      }
+
+      /* Anodising grain: the same noise the app draws over every raised face. */
+      .grain {
+        opacity: 0.07;
+        mix-blend-mode: overlay;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+      }
+
+      .vignette {
+        background-image: radial-gradient(
+          118% 132% at 50% 44%,
+          transparent 42%,
+          rgba(0, 0, 0, 0.5) 100%
+        );
+      }
+
+      /*
+       * Walnut rails, top and bottom. The only wood in the app, and the thing
+       * that separates the instrument from the room — three grain layers on
+       * coprime periods over the base gradient, as in src/index.css.
+       */
+      .rail {
+        inset: auto 0 auto 0;
+        height: 13px;
+        background-image:
+          repeating-linear-gradient(0deg, rgba(28, 14, 7, 0.42) 0 1px, transparent 1px 4px),
+          repeating-linear-gradient(0deg, rgba(214, 168, 106, 0.1) 0 1px, transparent 1px 7px),
+          repeating-linear-gradient(0deg, rgba(28, 14, 7, 0.42) 0 2px, transparent 2px 13px),
+          linear-gradient(180deg, #785946, #593e30 45%, #3d281f);
+      }
+      .rail-top {
+        top: 0;
+        box-shadow:
+          inset 0 1px 0 rgba(255, 226, 190, 0.14),
+          0 1px 0 rgba(0, 0, 0, 0.7),
+          0 8px 18px -8px rgba(0, 0, 0, 0.8);
+      }
+      .rail-bottom {
+        bottom: 0;
+        box-shadow:
+          inset 0 -1px 0 rgba(0, 0, 0, 0.5),
+          0 -1px 0 rgba(0, 0, 0, 0.7),
+          0 -8px 18px -8px rgba(0, 0, 0, 0.8);
+      }
+
+      /* ---------- The lockup ---------- */
+
+      .lockup {
+        inset: 80px auto auto 104px;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 26px;
+      }
+
+      /*
+       * The mark, seated in amber glass — the app's lit key, at size. The stack
+       * is three lights: one spilling up from where the glass is seated, one
+       * that is the body of the lamp, and a specular cap on ::before.
+       */
+      .cap {
+        position: relative;
+        width: 94px;
+        height: 94px;
+        border-radius: 21px;
+        background-image:
+          radial-gradient(120% 96% at 50% 118%, rgba(255, 206, 133, 0.85) 0%, transparent 64%),
+          radial-gradient(96% 120% at 50% 34%, #ffb233 0%, #ed6f00 72%, #8b2200 100%);
+        box-shadow:
+          inset 0 0 0 1px rgba(96, 34, 0, 0.7),
+          inset 0 -8px 16px -9px #8b2200,
+          0 0 18px -1px rgba(250, 138, 11, 0.55),
+          0 0 56px -6px rgba(250, 138, 11, 0.55),
+          0 6px 14px -6px rgba(0, 0, 0, 0.6);
+      }
+      .cap::before {
+        content: "";
+        position: absolute;
+        inset: 1px 1px auto 1px;
+        height: 45%;
+        border-radius: inherit;
+        background-image: linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.42) 0%,
+          transparent 100%
+        );
+      }
+      .cap svg {
+        position: absolute;
+        inset: 15px;
+        width: 64px;
+        height: 64px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 82px;
+        font-weight: 600;
+        letter-spacing: -0.035em;
+        line-height: 1;
+        color: #f0eeeb;
+        /* Engraved: the light lands just under the cut. */
+        text-shadow:
+          0 -1px 0 rgba(0, 0, 0, 0.7),
+          0 1px 0 rgba(255, 255, 255, 0.07);
+      }
+
+      /* The seam between two pieces of one case, not a rule drawn on it. */
+      .seam {
+        width: 548px;
+        height: 2px;
+        margin-top: 30px;
+        background-image: linear-gradient(
+          180deg,
+          rgba(0, 0, 0, 0.55) 0 1px,
+          rgba(255, 255, 255, 0.075) 1px 2px
+        );
+      }
+
+      p {
+        margin: 18px 0 0;
+        font-size: 26px;
+        font-weight: 400;
+        letter-spacing: -0.006em;
+        line-height: 1.3;
+        color: #a8a39d;
+      }
+
+      .chips {
+        display: flex;
+        gap: 12px;
+        margin-top: 24px;
+      }
+      /* Brushed keycaps, unpressed. */
+      .chip {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 9px 16px 10px;
+        border-radius: 9px;
+        border: 1px solid #0e0c0a;
+        background-image:
+          repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 3px),
+          linear-gradient(180deg, #312d2a, #221f1c);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.075),
+          inset 0 -1px 0 rgba(0, 0, 0, 0.45),
+          0 1px 0 #1e1b18,
+          0 2px 5px -1px rgba(0, 0, 0, 0.55);
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+        color: #bebab5;
+      }
+      /* Lit means active — one lamp per chip, and they are all on. */
+      .lamp {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background-image: radial-gradient(circle at 50% 34%, #ffd08a, #fa8a0b 62%, #a63d00);
+        box-shadow:
+          0 0 7px rgba(250, 138, 11, 0.85),
+          0 0 16px -2px rgba(250, 138, 11, 0.55);
+      }
+
+      /* Opposite the avatar, on the lit side of the case. */
+      .url {
+        inset: auto 96px 44px auto;
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        color: #bab5af;
+        text-shadow:
+          0 1px 2px rgba(0, 0, 0, 0.9),
+          0 0 14px rgba(0, 0, 0, 0.85);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="banner">
+      <div class="bloom"></div>
+      <canvas id="grille"></canvas>
+      <div class="shade"></div>
+      <div class="brush"></div>
+      <div class="grain"></div>
+      <div class="vignette"></div>
+
+      <div class="lockup">
+        <div class="row">
+          <div class="cap">
+            <!--
+              public/crown-icon.svg without its gold plate — the plate is the
+              glass key here. paint-order="stroke" keeps the outline outside
+              the white, so the crown does not close up.
+            -->
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+              <path
+                d="M5.8 11 11.2 15.6 16 8.6 20.8 15.6 26.2 11 24.3 23.4 7.7 23.4Z"
+                fill="#ffffff"
+                stroke="#1a0f07"
+                stroke-width="2"
+                stroke-linejoin="round"
+                paint-order="stroke"
+              />
+            </svg>
+          </div>
+          <h1>The Crown</h1>
+        </div>
+        <div class="seam"></div>
+        <p>Solana&rsquo;s top assets, ranked by volume.</p>
+        <div class="chips">
+          <span class="chip"><i class="lamp"></i>Ten assets</span>
+          <span class="chip"><i class="lamp"></i>Rank, not price</span>
+          <span class="chip"><i class="lamp"></i>Provably fair</span>
+        </div>
+      </div>
+
+      <div class="url"><i class="lamp"></i>thecrowngame.fun</div>
+
+      <div class="rail rail-top"></div>
+      <div class="rail rail-bottom"></div>
+    </div>
+
+    <script>
+      /*
+       * The grille.
+       *
+       * Two canvases: a field, which is a greyscale picture of how much light
+       * reaches each point of the panel, and the visible one, which perforates
+       * that field into dots whose radius is the luminance under them. That is
+       * what makes this a halftone rather than a dot pattern with a gradient
+       * over it — the crown has no edge of its own anywhere, only dots that get
+       * big enough to touch.
+       *
+       * Two things keep it from flattening into a white blob, which is what a
+       * mark drawn at one value does here. The crown is filled with a gradient
+       * of its own, so the dots inside it still have a range to run across; and
+       * no dot is ever wider than 0.46 of the pitch, so the holes never merge
+       * and the panel stays a panel at every brightness.
+       *
+       * The field is drawn at 1x and read once; the dots are drawn at 2x, so
+       * the screenshot downscales to a clean 1500x500.
+       */
+      const W = 1500;
+      const H = 500;
+      const SCALE = 2;
+      const PITCH = 10; // dot spacing; rows stagger by half of it
+      const TAU = Math.PI * 2;
+
+      // The crown, scaled off public/crown-icon.svg's 32x32 viewBox.
+      const MARK = "M5.8 11 11.2 15.6 16 8.6 20.8 15.6 26.2 11 24.3 23.4 7.7 23.4Z";
+      const MARK_SCALE = 21;
+      const MARK_CX = 1130;
+      const MARK_CY = 218;
+      // The path's own bounds, in viewBox units, mapped onto the case.
+      const MARK_TOP = MARK_CY + (8.6 - 16) * MARK_SCALE;
+      const MARK_BOTTOM = MARK_CY + (23.4 - 16) * MARK_SCALE;
+
+      /* ---- the crown, on its own, so it can be blurred as a whole ---- */
+      const plate = document.createElement("canvas");
+      plate.width = W;
+      plate.height = H;
+      const pl = plate.getContext("2d");
+      pl.translate(MARK_CX - 16 * MARK_SCALE, MARK_CY - 16 * MARK_SCALE);
+      pl.scale(MARK_SCALE, MARK_SCALE);
+      pl.clip(new Path2D(MARK));
+      pl.setTransform(1, 0, 0, 1, 0, 0);
+      // Dimmer at the points, brighter down where the lamp is — the crown is lit
+      // by the same light as the rest of the case, not a cutout pasted onto it.
+      const body = pl.createLinearGradient(0, MARK_TOP, 0, MARK_BOTTOM);
+      body.addColorStop(0, "rgba(255,255,255,0.22)");
+      body.addColorStop(0.55, "rgba(255,255,255,0.4)");
+      body.addColorStop(1, "rgba(255,255,255,0.52)");
+      pl.fillStyle = body;
+      pl.fillRect(0, 0, W, H);
+      const hot = pl.createRadialGradient(MARK_CX, MARK_BOTTOM - 30, 0, MARK_CX, MARK_BOTTOM - 30, 250);
+      hot.addColorStop(0, "rgba(255,255,255,0.2)");
+      hot.addColorStop(1, "rgba(255,255,255,0)");
+      pl.globalCompositeOperation = "lighter";
+      pl.fillStyle = hot;
+      pl.fillRect(0, 0, W, H);
+
+      /* ---- the field ---- */
+      const field = document.createElement("canvas");
+      field.width = W;
+      field.height = H;
+      const f = field.getContext("2d");
+
+      f.fillStyle = "#000";
+      f.fillRect(0, 0, W, H);
+
+      // A floor across the whole face, so the panel is perforated everywhere and
+      // the lit part is the same panel rather than a separate object. Slightly
+      // stronger toward the lamp.
+      const floor = f.createLinearGradient(0, 0, W, 0);
+      floor.addColorStop(0, "rgba(255,255,255,0.042)");
+      floor.addColorStop(1, "rgba(255,255,255,0.088)");
+      f.fillStyle = floor;
+      f.fillRect(0, 0, W, H);
+
+      f.globalCompositeOperation = "lighter";
+
+      // The lamp, and a shorter one below it — light spilling up off whatever
+      // the glass is seated in, which is the trick the amber keys play.
+      const lamp = f.createRadialGradient(MARK_CX, 250, 0, MARK_CX, 250, 620);
+      lamp.addColorStop(0, "rgba(255,255,255,0.2)");
+      lamp.addColorStop(0.45, "rgba(255,255,255,0.09)");
+      lamp.addColorStop(1, "rgba(255,255,255,0)");
+      f.fillStyle = lamp;
+      f.fillRect(0, 0, W, H);
+
+      const spill = f.createRadialGradient(MARK_CX, 470, 0, MARK_CX, 470, 420);
+      spill.addColorStop(0, "rgba(255,255,255,0.09)");
+      spill.addColorStop(1, "rgba(255,255,255,0)");
+      f.fillStyle = spill;
+      f.fillRect(0, 0, W, H);
+
+      // The blue side of the money pair, written into the blue channel only, so
+      // it tints the cold dots without changing how big they are. Blue in on the
+      // left, amber out on the right, as everywhere else in the app.
+      const cool = f.createRadialGradient(430, 455, 0, 430, 455, 540);
+      cool.addColorStop(0, "rgba(0,0,255,0.5)");
+      cool.addColorStop(1, "rgba(0,0,255,0)");
+      f.fillStyle = cool;
+      f.fillRect(0, 0, W, H);
+
+      // The crown: a wide soft halo, then the body itself with a short blur. The
+      // blur is what the dots ramp across — a hard edge gives a jagged one.
+      f.filter = "blur(9px)";
+      f.globalAlpha = 0.26;
+      f.drawImage(plate, 0, 0);
+      f.filter = "blur(1.1px)";
+      f.globalAlpha = 1;
+      f.drawImage(plate, 0, 0);
+      f.filter = "none";
+      f.globalAlpha = 1;
+      f.globalCompositeOperation = "source-over";
+
+      const px = f.getImageData(0, 0, W, H).data;
+      const idx = (x, y) => {
+        const cx = x < 0 ? 0 : x > W - 1 ? W - 1 : x;
+        const cy = y < 0 ? 0 : y > H - 1 ? H - 1 : y;
+        return ((cy | 0) * W + (cx | 0)) * 4;
+      };
+
+      /* ---- the dots ---- */
+      // Cold metal, then amber glass, then gold: the crown is the one thing in
+      // the app allowed to be gold, so the hot end of the ramp lands there
+      // rather than washing out to white.
+      const RAMP = [
+        [0.0, 76, 71, 66, 0.5],
+        [0.14, 124, 100, 74, 0.72],
+        [0.32, 190, 106, 26, 0.88],
+        [0.5, 237, 111, 0, 0.96],
+        [0.68, 255, 178, 51, 1.0],
+        [0.86, 240, 200, 92, 1.0],
+        [1.0, 255, 238, 186, 1.0],
+      ];
+      function tone(v, cool) {
+        let i = 0;
+        while (i < RAMP.length - 2 && v > RAMP[i + 1][0]) i++;
+        const a = RAMP[i];
+        const b = RAMP[i + 1];
+        const t = Math.min(1, Math.max(0, (v - a[0]) / (b[0] - a[0])));
+        let r = a[1] + (b[1] - a[1]) * t;
+        let g = a[2] + (b[2] - a[2]) * t;
+        let bl = a[3] + (b[3] - a[3]) * t;
+        // Only the dots the lamp has not reached take the blue.
+        const k = cool * Math.max(0, 1 - v / 0.3);
+        r += (64 - r) * k;
+        g += (92 - g) * k;
+        bl += (132 - bl) * k;
+        const alpha = a[4] + (b[4] - a[4]) * t;
+        return "rgba(" + Math.round(r) + "," + Math.round(g) + "," + Math.round(bl) + "," + alpha.toFixed(3) + ")";
+      }
+
+      const c = document.getElementById("grille");
+      c.width = W * SCALE;
+      c.height = H * SCALE;
+      const g = c.getContext("2d");
+      g.scale(SCALE, SCALE);
+
+      const rows = Math.ceil(H / PITCH) + 2;
+      const cols = Math.ceil(W / PITCH) + 2;
+      for (let r = -1; r < rows; r++) {
+        const y = r * PITCH + PITCH / 2;
+        const stagger = r & 1 ? PITCH / 2 : 0;
+        for (let i = -1; i < cols; i++) {
+          const x = i * PITCH + PITCH / 2 + stagger;
+          const p = idx(x, y);
+          const v = px[p] / 255;
+          const cool = Math.max(0, px[p + 2] - px[p]) / 255;
+          if (v < 0.02 && cool < 0.04) continue;
+          // Gamma under 1 opens the dark dots up a little, so the cold field
+          // still reads as holes rather than as dust; 0.46 is the widest a dot
+          // can be drawn without touching its neighbour on a staggered grid.
+          const radius = Math.pow(Math.min(1, v + cool * 0.25), 0.62) * PITCH * 0.46;
+          if (radius < 0.32) continue;
+          g.fillStyle = tone(v, cool);
+          // Only the hot end blooms; a glow on every dot is a haze, not a lamp.
+          if (v > 0.72) {
+            g.shadowColor = "rgba(250,138,11,0.5)";
+            g.shadowBlur = 4 + 12 * (v - 0.72);
+          } else {
+            g.shadowBlur = 0;
+          }
+          g.beginPath();
+          g.arc(x, y, radius, 0, TAU);
+          g.fill();
+        }
+      }
+      g.shadowBlur = 0;
+    </script>
+  </body>
+</html>
