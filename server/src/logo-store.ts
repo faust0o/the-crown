@@ -1,9 +1,12 @@
+import { createHash } from "node:crypto";
+import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Express, Request, RequestHandler, Response } from "express";
 import { fetchLogo, type Logo } from "./logo-proxy";
-import { prisma } from "./prisma";
 
 /**
- * Token logos, served from our own origin and our own database.
+ * Token logos, served from our own origin and our own disk.
  *
  * `/logo` used to be a pass-through: every visitor's browser asked for every
  * logo, and every ask was a fresh fetch from the issuer's host. That is slow —
@@ -13,15 +16,28 @@ import { prisma } from "./prisma";
  * nine logos in sixty-one failed, cbBTC's and PUMP's among them.
  *
  * Now a logo is fetched once, in the background, when the oracle first meets
- * the token, and kept in Postgres for good. The request path reads memory or
- * the database and only reaches the network for a logo it has never managed to
- * fetch. A failure is retried on a backoff rather than on every page load, so a
- * gateway that is rate-limiting us is not asked again by every visitor at once.
+ * the token, and kept on disk for good. The request path reads memory or disk
+ * and only reaches the network for a logo it has never managed to fetch. A
+ * failure is retried on a backoff rather than on every page load, so a gateway
+ * that is rate-limiting us is not asked again by every visitor at once.
+ *
+ * On Railway the disk is the service's volume, which Railway mounts at
+ * `RAILWAY_VOLUME_MOUNT_PATH`, so the logos outlive a deploy. They used to live
+ * in Postgres to keep the service volume-free, because a service with a volume
+ * cannot run two deployments at once and so every deploy has a few seconds of
+ * downtime. That trade was reversed deliberately. Off Railway, with no
+ * `LOGO_DIR`, they go to a temp directory: a cache that a reboot can clear,
+ * since every logo is fetched again on demand.
  *
  * It also stops being an open proxy. `/logo` serves the logos of tokens the game
  * knows — every URL the oracle has handed out — and refuses the rest, which a
  * store would otherwise have to hold for anyone who asked.
  */
+
+/** Where logos are kept. */
+const DIR =
+  process.env.LOGO_DIR ??
+  join(process.env.RAILWAY_VOLUME_MOUNT_PATH ?? join(tmpdir(), "crown"), "logos");
 
 /** How many logos may be fetched at once. */
 const CONCURRENCY = 4;
@@ -33,7 +49,7 @@ const MEMORY_BUDGET = 32 * 1024 * 1024;
 
 /** URLs the oracle has handed out as some token's `imageUrl`. */
 const known = new Set<string>();
-/** URLs with a row in `TokenLogo`. */
+/** Files in `DIR`, by `fileOf` name — one per stored logo. */
 const stored = new Set<string>();
 /** Recently served logos, oldest first — a `Map` keeps insertion order. */
 const hot = new Map<string, Logo>();
@@ -45,19 +61,50 @@ let active = 0;
 let primed: Promise<void> | null = null;
 
 /**
+ * The file a logo is kept in: the sha256 of its upstream URL, which is what
+ * the token's `imageUrl` names. Hashed because a URL is not a filename — it is
+ * too long, and its slashes and query strings mean something to a filesystem.
+ */
+const fileOf = (url: string) => createHash("sha256").update(url).digest("hex");
+const FILE = /^[0-9a-f]{64}$/;
+
+/**
  * Learn which logos are already stored. Once per process, and again only if it
- * failed — a database that was not up yet at boot.
+ * failed — a volume that was not mounted yet at boot.
  */
 function ensurePrimed(): Promise<void> {
-  primed ??= prisma.tokenLogo
-    .findMany({ select: { url: true } })
-    .then((rows) => {
-      for (const r of rows) stored.add(r.url);
+  primed ??= mkdir(DIR, { recursive: true })
+    .then(() => readdir(DIR))
+    .then((names) => {
+      for (const n of names) if (FILE.test(n)) stored.add(n);
     })
-    .catch(() => {
+    .catch((err) => {
+      console.warn(`⚠  logo store ${DIR} unavailable:`, err instanceof Error ? err.message : err);
       primed = null;
     });
   return primed;
+}
+
+/**
+ * One file per logo: its content type, a newline, then the body. A content type
+ * cannot contain a newline, so the first one is the boundary.
+ *
+ * Written to a temporary name and renamed into place, so a reader never sees a
+ * half-written file and a crash mid-write leaves nothing that looks stored.
+ */
+async function writeStored(url: string, logo: Logo): Promise<void> {
+  const name = fileOf(url);
+  const tmp = join(DIR, `${name}.${process.pid}.tmp`);
+  await writeFile(tmp, Buffer.concat([Buffer.from(`${logo.type}\n`), logo.body]));
+  await rename(tmp, join(DIR, name));
+  stored.add(name);
+}
+
+async function readStored(url: string): Promise<Logo | null> {
+  const file = await readFile(join(DIR, fileOf(url))).catch(() => null);
+  const cut = file?.indexOf(0x0a) ?? -1;
+  if (!file || cut < 0) return null;
+  return { type: file.subarray(0, cut).toString(), body: file.subarray(cut + 1) };
 }
 
 function keep(url: string, logo: Logo): void {
@@ -90,15 +137,8 @@ function load(url: string): Promise<Logo | null> {
       failures.delete(url);
       keep(url, logo);
       try {
-        // Copied into a plain Uint8Array, which is what Prisma's `Bytes` takes —
-        // a Buffer may be a view over a shared pool.
-        const bytes = new Uint8Array(logo.body);
-        await prisma.tokenLogo.upsert({
-          where: { url },
-          create: { url, contentType: logo.type, bytes },
-          update: { contentType: logo.type, bytes, fetchedAt: new Date() },
-        });
-        stored.add(url);
+        await ensurePrimed();
+        await writeStored(url, logo);
       } catch {
         // Unstored is still servable from memory, and is fetched again next
         // process. Never worth failing a request over.
@@ -146,9 +186,10 @@ function pump(): void {
 export function warmLogo(url: string | null | undefined): void {
   if (!url) return;
   known.add(url);
-  if (stored.has(url) || inFlight.has(url) || backingOff(url) || queue.includes(url)) return;
+  const name = fileOf(url);
+  if (stored.has(name) || inFlight.has(url) || backingOff(url) || queue.includes(url)) return;
   void ensurePrimed().then(() => {
-    if (stored.has(url) || inFlight.has(url) || queue.includes(url)) return;
+    if (stored.has(name) || inFlight.has(url) || queue.includes(url)) return;
     queue.push(url);
     pump();
   });
@@ -161,10 +202,9 @@ async function logoFor(url: string): Promise<Logo | null> {
     return held;
   }
   await ensurePrimed();
-  if (stored.has(url)) {
-    const row = await prisma.tokenLogo.findUnique({ where: { url } }).catch(() => null);
-    if (row) {
-      const logo = { type: row.contentType, body: Buffer.from(row.bytes) };
+  if (stored.has(fileOf(url))) {
+    const logo = await readStored(url);
+    if (logo) {
       keep(url, logo);
       return logo;
     }
@@ -182,7 +222,7 @@ export function serveLogos(app: Express, limiter: RequestHandler): void {
       return;
     }
     await ensurePrimed();
-    if (!known.has(url) && !stored.has(url)) {
+    if (!known.has(url) && !stored.has(fileOf(url))) {
       res.status(404).end();
       return;
     }

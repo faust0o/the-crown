@@ -218,23 +218,6 @@ model Token {
   updatedAt DateTime @updatedAt
 }
 
-/// A token's logo, held here so the board never waits on the host it came from.
-///
-/// Logos live on arweave, IPFS gateways and a long tail of issuer CDNs, and a
-/// fifth of the board's were failing on any given load — gateways answering 429,
-/// files served with no content type — while every new visitor made the proxy
-/// fetch them all over again. Fetched once, in the background, when the oracle
-/// first sees a token; served from here ever after. Postgres rather than a
-/// volume because a Railway service with a volume cannot deploy without
-/// downtime, and this one runs the game.
-model TokenLogo {
-  /// The upstream URL, exactly as the token's `imageUrl` names it.
-  url         String   @id
-  contentType String
-  bytes       Bytes
-  fetchedAt   DateTime @default(now())
-}
-
 /// One token's standing at one instant.
 ///
 /// The oracle keeps a rolling window in memory for speed, but that dies with the
