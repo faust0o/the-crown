@@ -72,7 +72,7 @@
           "name": "authority_tokens",
           "docs": [
             "The opening stake is taken from here. It is a real deposit, not an",
-            "accounting entry — see the note on the transfer below."
+            "accounting entry \u2014 see the note on the transfer below."
           ],
           "writable": true
         },
@@ -303,8 +303,8 @@
     {
       "name": "close_round",
       "docs": [
-        "Reclaim a finished round's storage. Its entries go first — see",
-        "`close_round_entry` — and the evidence lives in the transactions, not the",
+        "Reclaim a finished round's storage. Its entries go first \u2014 see",
+        "`close_round_entry` \u2014 and the evidence lives in the transactions, not the",
         "account."
       ],
       "discriminator": [
@@ -598,7 +598,7 @@
     {
       "name": "place_bet",
       "docs": [
-        "Buy a leg. The one path — players and desks alike."
+        "Buy a leg. The one path \u2014 players and desks alike."
       ],
       "discriminator": [
         222,
@@ -684,7 +684,7 @@
         {
           "name": "bet",
           "docs": [
-            "The position on this leg — opened on first contact, added to after.",
+            "The position on this leg \u2014 opened on first contact, added to after.",
             "",
             "Keyed by the leg rather than by a counter, which is what lets a second buy",
             "merge into the first instead of paying rent for a second account. It also",
@@ -1018,6 +1018,67 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "void_round",
+      "docs": [
+        "Give up on a round whose seed will never arrive, so its positions can",
+        "refund. Permissionless, and only long after the round ended."
+      ],
+      "discriminator": [
+        102,
+        72,
+        126,
+        187,
+        12,
+        18,
+        16,
+        96
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.index",
+                "account": "Round"
+              }
+            ]
+          },
+          "writable": true
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -1126,6 +1187,19 @@
         227,
         206
       ]
+    },
+    {
+      "name": "RoundVoided",
+      "discriminator": [
+        236,
+        16,
+        226,
+        252,
+        168,
+        201,
+        103,
+        69
+      ]
     }
   ],
   "errors": [
@@ -1208,6 +1282,11 @@
       "code": 6015,
       "name": "VaultUnderfunded",
       "msg": "The vault does not hold enough to pay this out."
+    },
+    {
+      "code": 6016,
+      "name": "VoidTooEarly",
+      "msg": "This round could still settle normally; it cannot be voided yet."
     }
   ],
   "types": [
@@ -1269,7 +1348,7 @@
           {
             "name": "target",
             "docs": [
-              "Cents the quoted legs divide between them — a hundred, less the share of",
+              "Cents the quoted legs divide between them \u2014 a hundred, less the share of",
               "any leg that is real but has no line."
             ],
             "type": "u16"
@@ -1285,23 +1364,23 @@
         "**Shares, not a price.** Buying the same leg twice adds to this account rather",
         "than opening a second one, and that is lossless because what a position is",
         "owed does not depend on how it was assembled: a buy of `s` credits at `c`",
-        "cents earns `s·100/c` shares, each worth one credit if the leg lands, so two",
+        "cents earns `s\u00b7100/c` shares, each worth one credit if the leg lands, so two",
         "buys are worth exactly the sum of their shares however far apart their prices",
         "were.",
         "",
         "`specs/positions-and-bots.md` was right that a position's value cannot be",
-        "re-derived from *average odds* — that really does lose the information. What it",
+        "re-derived from *average odds* \u2014 that really does lose the information. What it",
         "concluded from that was that lots must be stored separately, and storing shares",
         "is the other way out: the average entry price is recoverable as",
-        "`stake·100/shares` for display, and nothing that decides money is computed from",
+        "`stake\u00b7100/shares` for display, and nothing that decides money is computed from",
         "it. The client already aggregates by `(round, symbol, direction)` for exactly",
         "this reason, so this is the shape a player is shown anyway.",
         "",
         "Why it matters here and not in Postgres: a row costs nothing and an account",
         "costs rent. One account per *fill* made the cost of running the market a",
-        "function of how often the desks traded — fourteen thousand accounts and",
+        "function of how often the desks traded \u2014 fourteen thousand accounts and",
         "twenty-eight SOL for a half-hour round at a one-second tick. One account per",
-        "*position* bounds it at desks × coins × legs, which no tick rate can move. The",
+        "*position* bounds it at desks \u00d7 coins \u00d7 legs, which no tick rate can move. The",
         "desks can trade as often as the signal deserves.",
         "",
         "The individual fills are not lost, they are just not *here*: every one emits a",
@@ -1346,7 +1425,7 @@
           {
             "name": "start_rank",
             "docs": [
-              "Where the coin stood when the round opened — the thing the bet is a claim",
+              "Where the coin stood when the round opened \u2014 the thing the bet is a claim",
               "about. Copied in so settlement does not need the entry to decide an",
               "outcome it already has the facts for."
             ],
@@ -1426,7 +1505,7 @@
           {
             "name": "bid_cents",
             "docs": [
-              "The bid it closed into — walked through the pool by its own size, which is",
+              "The bid it closed into \u2014 walked through the pool by its own size, which is",
               "worse than the resting quote and is the number that actually paid."
             ],
             "type": "u16"
@@ -1448,7 +1527,7 @@
         "A fill, and the book it left behind.",
         "",
         "The marks are carried so an indexer can rebuild the tape without re-deriving",
-        "prices — which it could do, since `server/src/chain/pricing.ts` is the same",
+        "prices \u2014 which it could do, since `server/src/chain/pricing.ts` is the same",
         "arithmetic, but a record of what the book *was* at each fill is not something",
         "a later read of the account can reconstruct."
       ],
@@ -1509,7 +1588,7 @@
     {
       "name": "BetSettled",
       "docs": [
-        "A position resolved with the round — won, lost, or voided for want of a cut."
+        "A position resolved with the round \u2014 won, lost, or voided for want of a cut."
       ],
       "type": {
         "kind": "struct",
@@ -1540,7 +1619,7 @@
           {
             "name": "shares",
             "docs": [
-              "What it was owed if the leg landed — and what it was paid, if it did."
+              "What it was owed if the leg landed \u2014 and what it was paid, if it did."
             ],
             "type": "u64"
           },
@@ -1606,7 +1685,7 @@
         "able to move the vault arbitrarily: the vault's authority is this PDA, and the",
         "only instructions that sign for it are the payout paths, whose amounts are",
         "computed from bets the program itself wrote. That distinction is the whole",
-        "custody story — a compromised authority key can open a nonsense round, but it",
+        "custody story \u2014 a compromised authority key can open a nonsense round, but it",
         "cannot transfer a player's stake to itself."
       ],
       "type": {
@@ -1626,7 +1705,7 @@
           {
             "name": "round_count",
             "docs": [
-              "Rounds opened so far — the seed for the next one."
+              "Rounds opened so far \u2014 the seed for the next one."
             ],
             "type": "u64"
           },
@@ -1659,8 +1738,8 @@
         "So the player names a relayer, and `place_bet` requires that relayer's",
         "signature. Two independent things now have to hold before a credit moves: the",
         "SPL delegate must be this program's PDA, and the caller must be the relayer",
-        "this account names. The player can end it from either side — `revoke` on the",
-        "token account, or closing this — and neither needs the server's cooperation."
+        "this account names. The player can end it from either side \u2014 `revoke` on the",
+        "token account, or closing this \u2014 and neither needs the server's cooperation."
       ],
       "type": {
         "kind": "struct",
@@ -1751,7 +1830,7 @@
               "",
               "Not optional, and not a courtesy. A desk sizes its clip against the book",
               "it read a moment ago, and between that read and this instruction landing",
-              "the book can have moved — seven other desks are trading the same coin at",
+              "the book can have moved \u2014 seven other desks are trading the same coin at",
               "the same second, and every one of their fills re-marks it. Without a bound",
               "the order fills at whatever it finds, which is precisely the \"buy big,",
               "close immediately\" free-money case `average_mark` exists to close, run",
@@ -1770,7 +1849,7 @@
           {
             "name": "cut_rank",
             "docs": [
-              "1-based, and never 0 — 0 is how an unrecorded entry is spelled. A coin",
+              "1-based, and never 0 \u2014 0 is how an unrecorded entry is spelled. A coin",
               "that has fallen off the board is recorded one place below the last visible",
               "slot, which is how `recordCut` in `rounds.ts` has always settled it."
             ],
@@ -1787,7 +1866,7 @@
         "The settlement instant (\"the cut\") is a random point inside the final minute,",
         "so a pump timed at a known deadline cannot decide the outcome. It is committed",
         "up front: `commit_hash` = sha256(seed) is published when the round opens,",
-        "`seed` is revealed at settlement, and `cut_at` is derived from the seed — so",
+        "`seed` is revealed at settlement, and `cut_at` is derived from the seed \u2014 so",
         "anyone can verify the house did not pick a convenient moment. Moving this",
         "on-chain is what makes that verification something a player can do without",
         "trusting the server to serve them an honest `commitHash`."
@@ -1896,7 +1975,7 @@
       "docs": [
         "A coin's standing in one round, and the book on it.",
         "",
-        "`opening` is what the round's opening auction staked on each leg — the model's",
+        "`opening` is what the round's opening auction staked on each leg \u2014 the model's",
         "one and only word on price, posted by the authority at `add_entry` because",
         "computing it needs the priors. From there the mark is this pool's share of the",
         "coin's, and every credit traded dilutes it."
@@ -1980,7 +2059,7 @@
           {
             "name": "target",
             "docs": [
-              "Cents the quoted legs divide between them — a hundred, less the share of",
+              "Cents the quoted legs divide between them \u2014 a hundred, less the share of",
               "any leg that is real but has no line."
             ],
             "type": "u16"
@@ -2017,6 +2096,33 @@
           },
           {
             "name": "Settled"
+          },
+          {
+            "name": "Voided"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RoundVoided",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u64"
+          },
+          {
+            "name": "ends_at",
+            "type": "i64"
+          },
+          {
+            "name": "voided_at",
+            "type": "i64"
           }
         ]
       }

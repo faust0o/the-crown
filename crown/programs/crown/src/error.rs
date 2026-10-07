@@ -58,4 +58,7 @@ pub enum CrownError {
 
     #[msg("The vault does not hold enough to pay this out.")]
     VaultUnderfunded,
+
+    #[msg("This round could still settle normally; it cannot be voided yet.")]
+    VoidTooEarly,
 }

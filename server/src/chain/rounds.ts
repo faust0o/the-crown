@@ -69,13 +69,31 @@ const pad = (s: string, n: number): number[] => {
 const unpad = (bytes: number[] | Uint8Array): string =>
   Buffer.from(bytes).toString("utf8").replace(/\0+$/, "");
 
+/**
+ * The four states `RoundStatus` in `state.rs` can be in, in discriminant order.
+ *
+ * The order is the wire format — Anchor writes the variant's index as one byte —
+ * so this array is a layout declaration rather than a convenience, and
+ * `layout.test.ts` holds it against the IDL for exactly that reason.
+ *
+ * `Voided` was missing here for as long as `void_round` had existed, and the
+ * omission was silent in the worst way: the lookup fell through to `"Open"`, so
+ * a round that had been given up on came back claiming to be live. The runner
+ * then re-cut it every tick against a program that refuses to cut it, never put
+ * it on the list of rounds that owe money — and `void_round`'s entire purpose is
+ * to make the stakes on such a round refundable — so the refunds it exists to
+ * release were never swept.
+ */
+export const ROUND_STATUS = ["Open", "Cut", "Settled", "Voided"] as const;
+export type RoundStatus = (typeof ROUND_STATUS)[number];
+
 export interface ChainRound {
   index: bigint;
   address: PublicKey;
   startsAt: Date;
   lockAt: Date;
   endsAt: Date;
-  status: "Open" | "Cut" | "Settled";
+  status: RoundStatus;
   entryCount: number;
   crownSymbol: string | null;
   commitHash: string;
@@ -117,7 +135,7 @@ function decodeRound(address: PublicKey, data: Buffer): ChainRound {
   o += 8;  // cutAt
   o += 4;  // cutWindowSeconds
   const crownSymbol = unpad(data.subarray(o, o + 16)); o += 16;
-  const status = (["Open", "Cut", "Settled"] as const)[data.readUInt8(o)] ?? "Open"; o += 1;
+  const status = ROUND_STATUS[data.readUInt8(o)] ?? "Open"; o += 1;
   const entryCount = data.readUInt16LE(o);
 
   return {
@@ -142,11 +160,14 @@ function decodeRound(address: PublicKey, data: Buffer): ChainRound {
  * one still owed stopped being anybody's job — positions stranded, open forever,
  * with their rent still spent.
  */
+/** `Config`: discriminator(8) + authority(32) + credit_mint(32), then `round_count`. */
+export const ROUND_COUNT_OFFSET = 8 + 32 + 32;
+
 export async function recentRounds(n = 3): Promise<ChainRound[]> {
   const conn = connection();
   const cfg = await conn.getAccountInfo(configPda());
   if (!cfg) return [];
-  const count = cfg.data.readBigUInt64LE(8 + 32 + 32);
+  const count = cfg.data.readBigUInt64LE(ROUND_COUNT_OFFSET);
   if (count === 0n) return [];
 
   const wanted: bigint[] = [];
@@ -190,7 +211,7 @@ export async function latestRound(): Promise<ChainRound | null> {
   const cfg = await conn.getAccountInfo(configPda());
   if (!cfg) return null;
   // `round_count` sits after the discriminator, authority and mint.
-  const count = cfg.data.readBigUInt64LE(8 + 32 + 32);
+  const count = cfg.data.readBigUInt64LE(ROUND_COUNT_OFFSET);
   if (count === 0n) return null;
 
   const index = count - 1n;
@@ -338,6 +359,54 @@ export async function openChainRound(opts: {
   invalidateRound();
   const info = await conn.getAccountInfo(round);
   return info ? decodeRound(round, info.data as Buffer) : null;
+}
+
+/**
+ * How long after a round ends before it may be given up on.
+ *
+ * Mirrors `VOID_AFTER_SECONDS` in `crown/programs/crown/src/constants.rs`, which
+ * is the one that decides — the program refuses an early call with
+ * `VoidTooEarly`. Kept here so the runner does not spend a transaction learning
+ * something it can work out from the round it is already holding.
+ */
+export const VOID_AFTER_SECONDS = 7 * 24 * 3600;
+
+/**
+ * Give up on a round whose seed will never arrive, so its positions can refund.
+ *
+ * The last resort, and the reason it exists is in `void_round.rs`: a lost seed
+ * used to strand every position on a round permanently. This is the only thing
+ * that can free them, and it frees them as refunds — nobody is paid a claim on a
+ * result nobody can verify.
+ *
+ * "unsupported" means the deployed program predates the instruction. It is a
+ * plain fact about the cluster rather than a failure, and it is what the runner
+ * will see until `anchor deploy` has run.
+ */
+export async function voidRound(opts: {
+  authority: Keypair;
+  round: ChainRound;
+}): Promise<"voided" | "too-early" | "unsupported"> {
+  const ready = opts.round.endsAt.getTime() + VOID_AFTER_SECONDS * 1000;
+  if (Date.now() < ready) return "too-early";
+
+  const program = crownProgram(opts.authority, connection());
+  try {
+    await program.methods
+      .voidRound()
+      .accounts({ config: configPda(), round: opts.round.address })
+      .transaction()
+      .then((tx) => sendChainTx({ tx, signers: [opts.authority] }));
+    invalidateRound();
+    return "voided";
+  } catch (err) {
+    const why = String(err);
+    // The program on the cluster does not know this instruction yet: Anchor's
+    // fallback rejects the discriminator it has never seen.
+    if (why.includes("InstructionFallbackNotFound") || why.includes("0x65")) return "unsupported";
+    if (why.includes("VoidTooEarly") || why.includes("6016")) return "too-early";
+    throw err;
+  }
 }
 
 /**

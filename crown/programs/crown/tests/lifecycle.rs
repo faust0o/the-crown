@@ -1048,3 +1048,105 @@ fn buying_the_same_leg_twice_merges_without_losing_anything() {
         "average entry {average}c should sit within the prices paid {prices:?}"
     );
 }
+
+/// A round whose seed never arrives must not keep everybody's stake.
+///
+/// The seed is the one part of the design that lives off-chain until the reveal,
+/// which is what makes the commitment worth anything — and it means a house that
+/// loses it used to strand every position on that round permanently: the stake in
+/// the vault, the accounts unclosable, and no instruction in the program able to
+/// move either. It had already happened twice on devnet, to 101 positions and
+/// about 3.1 million credits.
+#[test]
+fn a_round_that_can_never_reveal_gives_the_stakes_back() {
+    const DIR: u8 = crown::pricing::LOWER as u8;
+    const STAKE: u64 = 1_000;
+    let mut ctx = setup();
+    let relayer = Keypair::new();
+    ctx.svm.airdrop(&relayer.pubkey(), 10_000_000_000).unwrap();
+    let payer = ctx.payer.insecure_clone();
+
+    let (player, tokens, delegation) = open_player(&mut ctx, &relayer.pubkey(), 10_000);
+    let (round, entries) = open_round(&mut ctx, [7u8; 32], 60);
+
+    let before = token_balance(&ctx.svm, &tokens);
+    let ix = place_bet_ix(
+        &ctx, round, entries[0], delegation, player.pubkey(), tokens,
+        relayer.pubkey(), 0, DIR, STAKE, 99,
+    );
+    send(&mut ctx.svm, &[ix], &relayer, &[]);
+    let bet_key = bet_pda(round, player.pubkey(), 0, DIR);
+    assert_eq!(token_balance(&ctx.svm, &tokens), before - STAKE, "the stake went to the vault");
+
+    // The ranks are recorded, so the outcome is sitting right there — and it is
+    // still not payable, because nothing has proved when the house looked.
+    for (i, entry) in entries.iter().enumerate() {
+        let cut_rank = if i == 0 { 2 } else { 1 };
+        let ix = Instruction::new_with_bytes(
+            crown::id(),
+            &crown::instruction::RecordCut {
+                args: crown::instructions::RecordCutArgs { cut_rank },
+            }
+            .data(),
+            crown::accounts::RecordCut {
+                config: ctx.config, round, entry: *entry, authority: payer.pubkey(),
+            }
+            .to_account_metas(None),
+        );
+        let t = now(&ctx.svm) + if i == 0 { 70 } else { 0 };
+        warp_to(&mut ctx.svm, t);
+        send(&mut ctx.svm, &[ix], &payer, &[]);
+    }
+
+    let void_ix = || Instruction::new_with_bytes(
+        crown::id(),
+        &crown::instruction::VoidRound {}.data(),
+        crown::accounts::VoidRound { config: ctx.config, round }.to_account_metas(None),
+    );
+
+    // A round that is merely slow must resolve normally. Voiding early would make
+    // "the house lost the seed" something the house could choose to do.
+    let err = try_send(&mut ctx.svm, &[void_ix()], &payer, &[]).unwrap_err();
+    assert_error(&err, crown::error::CrownError::VoidTooEarly);
+
+    // A week later it is genuinely lost.
+    let r: Round = read(&ctx.svm, &round);
+    warp_to(&mut ctx.svm, r.ends_at + crown::constants::VOID_AFTER_SECONDS + 1);
+
+    // By a stranger: this is the path a player takes when the house is gone, so
+    // it cannot need the house.
+    let stranger = Keypair::new();
+    ctx.svm.airdrop(&stranger.pubkey(), 1_000_000_000).unwrap();
+    send(&mut ctx.svm, &[void_ix()], &stranger, &[]);
+
+    let r: Round = read(&ctx.svm, &round);
+    assert_eq!(r.status, RoundStatus::Voided);
+    assert_eq!(r.seed, [0u8; 32], "nothing was revealed, and nothing should claim to be");
+
+    // And now the stake comes back — the stake, not the claim. The bet would have
+    // *won* on the recorded ranks, and it is deliberately not paid as a winner:
+    // an unverifiable result pays nobody.
+    let settle = Instruction::new_with_bytes(
+        crown::id(),
+        &crown::instruction::SettleBet {}.data(),
+        crown::accounts::SettleBet {
+            config: ctx.config, round, entry: entries[0], bet: bet_key,
+            owner_tokens: tokens, vault: ctx.vault, rent_receiver: relayer.pubkey(),
+            token_program: anchor_spl::token::ID,
+        }
+        .to_account_metas(None),
+    );
+    send(&mut ctx.svm, &[settle], &stranger, &[]);
+
+    assert_eq!(
+        token_balance(&ctx.svm, &tokens), before,
+        "a voided round must return exactly what was staked — no more, no less"
+    );
+    assert!(is_closed(&ctx.svm, &bet_key), "and the position's rent comes back with it");
+
+    // Voiding is not a second bite at a finished round.
+    assert!(
+        try_send(&mut ctx.svm, &[void_ix()], &stranger, &[]).is_err(),
+        "a voided round must not void again"
+    );
+}

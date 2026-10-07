@@ -102,4 +102,10 @@ pub mod crown {
     pub fn settle_bet(ctx: Context<SettleBet>) -> Result<()> {
         instructions::settle_bet::settle_bet_handler(ctx)
     }
+
+    /// Give up on a round whose seed will never arrive, so its positions can
+    /// refund. Permissionless, and only long after the round ended.
+    pub fn void_round(ctx: Context<VoidRound>) -> Result<()> {
+        instructions::void_round::void_round_handler(ctx)
+    }
 }

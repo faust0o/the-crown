@@ -81,3 +81,18 @@ pub struct BetPlaced {
     pub marks: [u16; 3],
     pub placed_at: i64,
 }
+
+/// A round given up on.
+///
+/// The one event that says a result will never exist. Emitted rather than
+/// inferred from the account, because the account can be closed later and this is
+/// the only durable record that the positions on this round refunded rather than
+/// resolved — an indexer reading `Void` payouts otherwise cannot tell "no data
+/// point for that coin" from "this whole round was abandoned".
+#[event]
+pub struct RoundVoided {
+    pub round: Pubkey,
+    pub index: u64,
+    pub ends_at: i64,
+    pub voided_at: i64,
+}

@@ -34,3 +34,16 @@ pub const MAX_ENTRIES: u8 = 32;
 /// than the rent matters over — and it leaves a player who wants to settle their
 /// own position, which they may always do, a generous window to do it in.
 pub const SETTLEMENT_GRACE_SECONDS: i64 = 3600;
+
+/// How long after a round ends before it may be given up on.
+///
+/// The deadline `void_round` waits for. It is deliberately far longer than any
+/// ordinary interruption — a restart, a congested cluster, an exhausted RPC
+/// quota, a key being rotated — because voiding is irreversible and a round that
+/// could still settle normally must be allowed to. It is also far shorter than
+/// "never", which is what the alternative was: a lost seed used to strand every
+/// position on the round for good.
+///
+/// Seven days. A round runs for thirty minutes and reveals within a minute of
+/// its cut, so this is two orders of magnitude past the honest case.
+pub const VOID_AFTER_SECONDS: i64 = 7 * 24 * 3600;

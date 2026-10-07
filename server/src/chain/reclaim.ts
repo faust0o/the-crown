@@ -34,9 +34,6 @@ import type { ChainRound } from "./rounds";
  * and silent.
  */
 
-/** How many rounds to reclaim per sweep. */
-const BATCH = Number(process.env.CHAIN_RECLAIM_BATCH ?? 1);
-
 export interface ReclaimResult {
   round: bigint;
   entriesClosed: number;
@@ -134,4 +131,3 @@ export async function reclaimRound(opts: {
   };
 }
 
-export { BATCH as RECLAIM_BATCH };

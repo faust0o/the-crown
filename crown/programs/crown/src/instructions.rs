@@ -8,6 +8,7 @@ pub mod place_bet;
 pub mod record_cut;
 pub mod reveal_seed;
 pub mod settle_bet;
+pub mod void_round;
 
 // Glob re-exports, because `#[program]` resolves the `__client_accounts_*`
 // modules it generates through the crate root and they are not nameable here.
@@ -27,3 +28,4 @@ pub use place_bet::*;
 pub use record_cut::*;
 pub use reveal_seed::*;
 pub use settle_bet::*;
+pub use void_round::*;

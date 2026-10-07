@@ -25,6 +25,11 @@ use crate::state::{Bet, BetStatus, Config, Round, RoundEntry, RoundStatus};
 /// - no cut was ever recorded for that coin → **Void**, stake refunded. Leaving
 ///   it open used to strand it forever, since the cut is an instant that has
 ///   passed and nothing would ever revisit it.
+///
+/// A fourth case reaches the same refund from the other direction: the whole
+/// round was given up on. See `void_round` — a round whose seed never arrived
+/// has no verifiable result, so nothing on it is paid as a claim and everything
+/// on it comes back as a stake.
 #[derive(Accounts)]
 pub struct SettleBet<'info> {
     #[account(seeds = [CONFIG_SEED], bump = config.bump)]
@@ -106,11 +111,23 @@ pub fn settle_bet_handler(ctx: Context<SettleBet>) -> Result<()> {
     let bet = &mut ctx.accounts.bet;
 
     require!(bet.status == BetStatus::Open, CrownError::BetNotOpen);
-    require!(round.status == RoundStatus::Settled, CrownError::WrongStatus);
+    // Voided counts, and only these two do. A round still Open or at Cut may yet
+    // resolve properly, and settling against it early would pay claims the
+    // commitment has not proven.
+    require!(
+        round.status == RoundStatus::Settled || round.status == RoundStatus::Voided,
+        CrownError::WrongStatus
+    );
 
     let now = Clock::get()?.unix_timestamp;
 
-    let (status, payout) = if entry.cut_rank == 0 {
+    let (status, payout) = if round.status == RoundStatus::Voided {
+        // The round was abandoned, so no rank on it decides anything — including
+        // the ranks `record_cut` may have written before the seed went missing.
+        // Refunding the stake is the only outcome that cannot be manufactured by
+        // losing a seed on purpose.
+        (BetStatus::Void, bet.stake)
+    } else if entry.cut_rank == 0 {
         // No cut was recorded for that coin and none ever will be. Refund what
         // went in — the stake, not the shares: a void is the bet not happening,
         // so it pays back the cost rather than the claim.

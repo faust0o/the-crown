@@ -36,6 +36,13 @@ pub enum RoundStatus {
     Cut,
     /// Seed revealed, bets payable.
     Settled,
+    /// Given up on: the seed was never revealed and never will be, so every
+    /// position on it refunds its stake. See `void_round`.
+    ///
+    /// Appended rather than inserted. The discriminant is the byte on chain, so
+    /// putting this anywhere but last would silently re-read every `Settled`
+    /// round in existence as something else.
+    Voided,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, InitSpace, Clone, Copy, PartialEq, Eq, Debug)]
