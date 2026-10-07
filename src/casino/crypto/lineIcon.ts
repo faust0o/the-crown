@@ -1,7 +1,11 @@
 import { fallbackColor } from "./useIconColors";
 
-/** Side of the backing canvas: 3x the 14px liveline draws it at, so it stays sharp on any screen. */
-const PX = 42;
+/** Backing pixels per CSS pixel, so the mark stays sharp on any screen. */
+const SCALE = 3;
+/** Side of the backing canvas: liveline draws it at 14px. */
+const PX = 14 * SCALE;
+/** Corner radius, 2px once liveline scales the canvas down. */
+const RADIUS = 2 * SCALE;
 
 /** symbol|url -> canvas. Module-level so a logo is only fetched once per session. */
 const cache = new Map<string, HTMLCanvasElement>();
@@ -45,15 +49,20 @@ function drawLogo(canvas: HTMLCanvasElement, img: HTMLImageElement) {
   const scale = Math.min(PX / img.naturalWidth, PX / img.naturalHeight);
   const w = img.naturalWidth * scale;
   const h = img.naturalHeight * scale;
+  const x = (PX - w) / 2;
+  const y = (PX - h) / 2;
+  // Round the logo itself rather than the canvas, so a non-square logo still
+  // gets its corners cut.
   ctx.beginPath();
-  ctx.roundRect(0, 0, PX, PX, 3);
+  ctx.roundRect(x, y, w, h, RADIUS);
   ctx.clip();
-  ctx.drawImage(img, (PX - w) / 2, (PX - h) / 2, w, h);
+  ctx.drawImage(img, x, y, w, h);
 }
 
 /**
- * One letter on the line's own colour. A logo that fails here failed in
- * `useIconColors` too, so its line is drawn in `fallbackColor` as well.
+ * One letter on the line's own colour, in the same rounded square as a logo. A
+ * logo that fails here failed in `useIconColors` too, so its line is drawn in
+ * `fallbackColor` as well.
  */
 function drawFallback(canvas: HTMLCanvasElement, symbol: string, ticker: string) {
   const ctx = canvas.getContext("2d");
@@ -61,7 +70,7 @@ function drawFallback(canvas: HTMLCanvasElement, symbol: string, ticker: string)
   const color = fallbackColor(symbol);
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.arc(PX / 2, PX / 2, PX / 2, 0, Math.PI * 2);
+  ctx.roundRect(0, 0, PX, PX, RADIUS);
   ctx.fill();
 
   // Dark or light letter, whichever the disc's luma can carry.

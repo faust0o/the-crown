@@ -91,6 +91,37 @@ function rgbToHue(r: number, g: number, b: number): number {
 const hex = (r: number, g: number, b: number) =>
   "#" + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
 
+/**
+ * A line colour that still shows on the board it is drawn on.
+ *
+ * A navy or oxblood logo makes a line that vanishes into the dark theme's
+ * ground. Those get their lightness inverted — hue and saturation kept, so the
+ * line still matches its coin's mark — with a floor, because pure blue sits at
+ * 50% lightness and would invert onto itself. Light colours and the light theme
+ * pass through untouched.
+ */
+export function legibleOn(scheme: "light" | "dark", color: string): string {
+  if (scheme !== "dark") return color;
+  const n = parseInt(color.slice(1), 16);
+  const r = (n >> 16) / 255, g = ((n >> 8) & 0xff) / 255, b = (n & 0xff) / 255;
+  // Same luma weighting `lineIcon` uses to pick its letter colour.
+  if (0.299 * r + 0.587 * g + 0.114 * b >= 0.32) return color;
+
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const s = max === min ? 0 : (max - min) / (1 - Math.abs(2 * l - 1));
+  const h = rgbToHue(r * 255, g * 255, b * 255);
+
+  const L = Math.max(1 - l, 0.68);
+  const c = (1 - Math.abs(2 * L - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const [r1, g1, b1] =
+    h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] :
+    h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  const m = L - c / 2;
+  return hex((r1 + m) * 255, (g1 + m) * 255, (b1 + m) * 255);
+}
+
 /** Logo colour per image URL, filled in as each one is sampled. */
 export function useIconColors(urls: (string | null)[]): Map<string, string> {
   const [version, bump] = useState(0);
