@@ -5,8 +5,9 @@ import { cx } from "./cx";
  * The case of something: a raised face with a lit top edge, a shaded bottom
  * one, and a shadow under it.
  *
- * Reserved for the two things in the app that genuinely sit above the page: a
- * dialog and a menu. Sections of a page are not among them — see `Section`.
+ * Reserved for the things in the app that genuinely sit above the page: a
+ * dialog, a menu, and the ticket — the one instrument on the page you operate
+ * rather than read. Sections of a page are not among them — see `Section`.
  * Everything was a panel once, and a screen of instruments read as a stack of
  * receipts.
  *

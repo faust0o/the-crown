@@ -4,17 +4,7 @@ import { formatCompact, formatCredits } from "../format";
 import { CoinIcon } from "./CoinIcon";
 import { Marquee } from "./Marquee";
 import { SELL_QUOTE, type CryptoBet, type Direction, type Entry, type Standing } from "./graphql";
-import {
-  Amount,
-  Button,
-  Caption,
-  Chip,
-  Empty,
-  Label,
-  Section,
-  Segmented,
-  type Tone,
-} from "../ui";
+import { Amount, Button, Chip, cx, Empty, Panel, Seam, type Tone } from "../ui";
 
 /** Buying, the chips stack: four taps on +25 is a hundred. */
 const STAKES = [5, 25, 100] as const;
@@ -32,6 +22,11 @@ const FRACTIONS = [0.25, 0.5, 0.75] as const;
 const POLL_MS = 2_000;
 
 const DIRECTIONS = ["HIGHER", "DRAW", "LOWER"] as const;
+
+const SIDES = [
+  { value: "buy", label: "Buy" },
+  { value: "sell", label: "Sell" },
+] as const satisfies readonly { value: Side; label: string }[];
 
 const TONE: Record<Direction, { label: string; blurb: string; tone: Tone }> = {
   HIGHER: { label: "Higher", blurb: "climbs the board", tone: "up" },
@@ -188,9 +183,9 @@ export function BetPanel({
 
   if (!standing || !entry) {
     return (
-      <Section title="Ticket">
+      <Panel as="section" aria-label="Ticket" className="mb-4">
         <Empty>Pick a coin from the board to place a bet.</Empty>
-      </Section>
+      </Panel>
     );
   }
 
@@ -226,228 +221,286 @@ export function BetPanel({
         : (disabledReason ?? "That line is no longer on the book.");
 
   return (
-    <Section title="Ticket">
-      <div className="flex items-center gap-2.5 pb-2.5">
-        <CoinIcon ticker={standing.ticker} src={standing.imageUrl} size={32} />
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-baseline gap-2 text-sm font-semibold text-foreground">
-            <span className="shrink-0">{standing.ticker}</span>
-            <Marquee text={standing.name} className="min-w-0 flex-1 font-normal text-muted" />
-          </div>
-          <div className="font-mono text-[11px] tabular-nums text-muted">
-            rank {entry.startRank} → {standing.rank}
-            {moved !== 0 && (
-              <span style={{ color: moved < 0 ? "var(--up)" : "var(--down)" }}>
-                {" "}
-                {moved < 0 ? "▲" : "▼"} {Math.abs(moved)}
+    /*
+      A card, where every other section on the page is flat: this is the one
+      instrument on it you operate rather than read, and it is built the way the
+      dialogs are — a plate across the top saying what it is about, a seam, and
+      the face under it.
+    */
+    <Panel as="section" aria-label="Ticket" className="mb-4">
+      <div className="mat-plate px-4 pt-3">
+        <div className="flex items-center gap-3">
+          <CoinIcon ticker={standing.ticker} src={standing.imageUrl} size={40} />
+          <div className="min-w-0 flex-1">
+            {/* What the market is about, then what is being traded in it. */}
+            <div className="font-mono text-[11px] tabular-nums text-muted">
+              rank {entry.startRank} → {standing.rank}
+              {moved !== 0 && (
+                <span style={{ color: moved < 0 ? "var(--up)" : "var(--down)" }}>
+                  {" "}
+                  {moved < 0 ? "▲" : "▼"} {Math.abs(moved)}
+                </span>
+              )}
+              {" · $"}
+              {formatCompact(standing.quoteVolume)}
+            </div>
+            <div className="flex min-w-0 items-baseline gap-2">
+              <span className="mat-engrave shrink-0 text-lg font-semibold leading-snug text-foreground">
+                {standing.ticker}
               </span>
-            )}
-            {" · $"}
-            {formatCompact(standing.quoteVolume)}
+              <Marquee text={standing.name} className="min-w-0 flex-1 text-sm text-muted" />
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* The switch, across the whole ticket: everything under it changes with it. */}
-      <div className="border-b border-hairline pb-2">
-        <Segmented
-          tabs
-          block
-          size="sm"
-          label="Buy or sell"
-          value={side}
-          onChange={setSide}
-          options={[
-            { value: "buy", label: "Buy" },
-            { value: "sell", label: "Sell" },
-          ]}
-        />
-      </div>
-
-      {crowned && isBuy && (
-        <div
-          title="The reigning token can't be backed. Win the crown by finishing first."
-          className="cursor-help pt-2.5 text-sm text-gold"
-        >
-          Wearing the crown — no book this round.
-        </div>
-      )}
-
-      {/* The three outcomes. Buying, each carries its price; selling, what is
-          standing on it. What a line claims is in the tooltip rather than a
-          paragraph underneath — the wording never changes, and it cost the panel
-          two lines forever. */}
-      <div className="mt-2.5 grid grid-cols-3 gap-1.5">
-        {DIRECTIONS.map((d) => {
-          const tone = TONE[d];
-          const l = entry.lines.find((x) => x.direction === d);
-          const available = isBuy ? Boolean(l?.available) : held[d] > 0;
-          return (
-            <Chip
-              key={d}
-              tone={tone.tone}
-              active={d === active}
-              disabled={!available}
-              onClick={() => {
-                if (isBuy) onDirection(d);
-                else {
-                  setSellLine(d);
-                  setSellInput(null);
-                }
-              }}
-              title={`${standing.ticker} ${tone.blurb} by the cut, against its rank of ${entry.startRank} at the open`}
-              className="px-2 py-1.5"
-            >
-              <span
-                className="block text-[10px] font-semibold uppercase tracking-wide"
-                style={{ color: "var(--tone)" }}
-              >
-                {tone.label}
-              </span>
-              <span className="block font-mono text-sm tabular-nums text-foreground">
-                {isBuy
-                  ? l?.available
-                    ? `${l.cents}¢`
-                    : "—"
-                  : held[d] > 0
-                    ? formatCredits(held[d])
-                    : "—"}
-              </span>
-            </Chip>
-          );
-        })}
-      </div>
-
-      {/* The amount, and under its label the number that caps it — the balance
-          while buying, the position while selling. */}
-      <div className="mt-3 flex items-center justify-between gap-3">
-        <span className="shrink-0">
-          <Label htmlFor={amountId}>amount</Label>
-          {/* Signed out this is blank rather than "$0": neither number exists
-              until there is an account to hold it, and printing a zero would
-              read as an empty balance rather than as no balance. */}
+        {/* The switch, at the foot of the plate: everything under the seam
+            changes with it. Opposite it, the number that caps the amount — the
+            balance while buying, the position while selling. Signed out it is
+            blank rather than "$0": neither exists until there is an account to
+            hold it, and a zero would read as an empty balance rather than as
+            no balance. */}
+        <div className="mt-2 flex items-baseline justify-between gap-3">
+          <SideTabs value={side} onChange={setSide} />
           {signedIn && (
-            <span className="block font-mono text-[11px] tabular-nums text-muted">
+            <span className="font-mono text-[11px] tabular-nums text-muted">
               {isBuy ? `${formatCredits(credits)} free` : `${formatCredits(position)} held`}
             </span>
           )}
-        </span>
-        <Amount
-          id={amountId}
-          value={amount}
-          onValue={setAmount}
-          aria-label={isBuy ? "Stake in dollars" : "Dollars of position to sell"}
-        />
-      </div>
-
-      <div className="mt-2 flex items-center gap-1.5">
-        {isBuy
-          ? STAKES.map((s) => (
-              <Button
-                key={s}
-                size="sm"
-                disabled={ceiling != null && amount >= ceiling}
-                onClick={() => addAmount(s)}
-                aria-label={`Add $${s}`}
-                className="flex-1 font-mono tabular-nums"
-              >
-                +${s}
-              </Button>
-            ))
-          : FRACTIONS.map((f) => (
-              <Button
-                key={f}
-                size="sm"
-                disabled={position <= 0}
-                onClick={() => setAmount(Math.max(1, Math.floor(position * f)))}
-                aria-label={`Sell ${f * 100}% of the position`}
-                className="flex-1 font-mono tabular-nums"
-              >
-                {f * 100}%
-              </Button>
-            ))}
-        <Button
-          size="sm"
-          disabled={!ceiling || amount >= ceiling}
-          onClick={() => ceiling != null && setAmount(ceiling)}
-          title={isBuy ? "Stake every credit you hold" : "Sell the whole position"}
-          className="flex-1 font-mono uppercase tabular-nums"
-        >
-          Max
-        </Button>
-      </div>
-
-      {/* What the ticket is worth on the other side of the key. Buying, that is
-          the payout if the line lands; selling, it is the cash, now. With no
-          line to buy there is no payout to quote, so the row is left out. */}
-      {isBuy ? (
-        line?.available && (
-          <div className="mt-3 flex items-end justify-between gap-3 border-t border-hairline pt-2.5">
-            <span className="min-w-0">
-              <Caption>to win</Caption>
-              <span className="block font-mono text-[11px] tabular-nums text-muted">
-                {`${line.cents}¢ · ${line.multiplier.toFixed(2)}x`}
-              </span>
-            </span>
-            <span className="shrink-0 font-mono text-xl tabular-nums" style={{ color: "var(--up)" }}>
-              {formatCredits(amount * line.multiplier)}
-            </span>
-          </div>
-        )
-      ) : (
-        <div className="mt-3 flex items-end justify-between gap-3 border-t border-hairline pt-2.5">
-          <span className="min-w-0">
-            <Caption>you receive</Caption>
-            <span className="block font-mono text-[11px] tabular-nums text-muted">
-              {sale ? `${sale.cents}¢ · ${formatSigned(sale.payout - sale.sold)}` : "no bid"}
-            </span>
-          </span>
-          <span className="shrink-0 font-mono text-xl tabular-nums" style={{ color: "var(--sell-ink)" }}>
-            {sale ? formatCredits(sale.payout) : "—"}
-          </span>
         </div>
-      )}
+      </div>
+      <Seam />
 
-      {/* The one lit control on the page: the thing the page is for. Blue buying
-          and amber selling — the same lamp, and which colour it is is the whole
-          statement about which way the money goes. */}
-      <Button
-        variant="glass"
-        side={isBuy ? "buy" : "sell"}
-        size="lg"
-        block
-        className="mt-2.5"
-        disabled={!ready}
-        onClick={() => {
-          if (isBuy) {
-            setSide("buy");
-            onPlace(amount);
-          } else {
-            onSell(sellDirection, amount);
-            setSellInput(null);
-          }
-        }}
-      >
-        {isBuy
-          ? busy
-            ? "Placing…"
-            : signedIn
-              ? `Buy ${TONE[direction].label}`
-              : // Says what the tap does. A lit key reading "Buy Higher" that
-                // produces a wallet dialog is a small lie, and the ticket under
-                // it survives the sign-in — nothing composed here is lost.
-                "Sign in to buy"
-          : selling
-            ? "Selling…"
-            : `Sell ${TONE[sellDirection].label}`}
-      </Button>
-      {/* Silent while the first quote is in flight: "no bid" is a claim about
-          the book, and a panel that makes it before it has asked is wrong for
-          the couple of hundred milliseconds anybody would actually read it. */}
-      {!ready && !(pricing && sale == null) && (
-        <p className="mt-2 mb-0 text-center text-[11px] text-muted">{refusal}</p>
-      )}
-    </Section>
+      <div className="p-4">
+        {crowned && isBuy && (
+          <div
+            title="The reigning token can't be backed. Win the crown by finishing first."
+            className="mb-3 cursor-help text-sm text-gold"
+          >
+            Wearing the crown — no book this round.
+          </div>
+        )}
+
+        {/* The three outcomes. Buying, each carries its price; selling, what is
+            standing on it. What a line claims is in the tooltip rather than a
+            paragraph underneath — the wording never changes, and it cost the
+            panel two lines forever. */}
+        <div className="grid grid-cols-3 gap-2">
+          {DIRECTIONS.map((d) => {
+            const tone = TONE[d];
+            const l = entry.lines.find((x) => x.direction === d);
+            const available = isBuy ? Boolean(l?.available) : held[d] > 0;
+            return (
+              <Chip
+                key={d}
+                tone={tone.tone}
+                active={d === active}
+                disabled={!available}
+                onClick={() => {
+                  if (isBuy) onDirection(d);
+                  else {
+                    setSellLine(d);
+                    setSellInput(null);
+                  }
+                }}
+                title={`${standing.ticker} ${tone.blurb} by the cut, against its rank of ${entry.startRank} at the open`}
+                className="px-2 py-2"
+              >
+                <span
+                  className="block text-center text-[10px] font-semibold uppercase tracking-wide"
+                  style={{ color: "var(--tone)" }}
+                >
+                  {tone.label}
+                </span>
+                <span className="block text-center font-mono text-base font-semibold tabular-nums text-foreground">
+                  {isBuy
+                    ? l?.available
+                      ? `${l.cents}¢`
+                      : "—"
+                    : held[d] > 0
+                      ? formatCredits(held[d])
+                      : "—"}
+                </span>
+              </Chip>
+            );
+          })}
+        </div>
+
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <label htmlFor={amountId} className="shrink-0 text-sm text-foreground">
+            Amount
+          </label>
+          <Amount
+            id={amountId}
+            value={amount}
+            onValue={setAmount}
+            aria-label={isBuy ? "Stake in dollars" : "Dollars of position to sell"}
+          />
+        </div>
+
+        <div className="mt-2.5 flex items-center justify-end gap-1.5">
+          {isBuy
+            ? STAKES.map((s) => (
+                <Button
+                  key={s}
+                  size="sm"
+                  disabled={ceiling != null && amount >= ceiling}
+                  onClick={() => addAmount(s)}
+                  aria-label={`Add $${s}`}
+                  className="min-w-12 font-mono tabular-nums"
+                >
+                  +${s}
+                </Button>
+              ))
+            : FRACTIONS.map((f) => (
+                <Button
+                  key={f}
+                  size="sm"
+                  disabled={position <= 0}
+                  onClick={() => setAmount(Math.max(1, Math.floor(position * f)))}
+                  aria-label={`Sell ${f * 100}% of the position`}
+                  className="min-w-12 font-mono tabular-nums"
+                >
+                  {f * 100}%
+                </Button>
+              ))}
+          <Button
+            size="sm"
+            disabled={!ceiling || amount >= ceiling}
+            onClick={() => ceiling != null && setAmount(ceiling)}
+            title={isBuy ? "Stake every credit you hold" : "Sell the whole position"}
+            className="min-w-12 font-mono uppercase tabular-nums"
+          >
+            Max
+          </Button>
+        </div>
+      </div>
+
+      {/* A tear line, not a seam: what is above it is the order being composed,
+          and below it is what the order comes to. */}
+      <div aria-hidden="true" className="border-t border-dashed border-hairline" />
+
+      <div className="p-4">
+        {/* What the ticket is worth on the other side of the key. Buying, that
+            is the payout if the line lands; selling, it is the cash, now. With
+            no line to buy there is no payout to quote, so the row is left out. */}
+        {isBuy ? (
+          line?.available && (
+            <Payout
+              label="To win"
+              detail={`price ${line.cents}¢ · ${line.multiplier.toFixed(2)}x`}
+              value={formatCredits(amount * line.multiplier)}
+              color="var(--up)"
+            />
+          )
+        ) : (
+          <Payout
+            label="You receive"
+            detail={sale ? `price ${sale.cents}¢ · ${formatSigned(sale.payout - sale.sold)}` : "no bid"}
+            value={sale ? formatCredits(sale.payout) : "—"}
+            color="var(--sell-ink)"
+          />
+        )}
+
+        {/* The one lit control on the page: the thing the page is for. Blue
+            buying and amber selling — the same lamp, and which colour it is is
+            the whole statement about which way the money goes. */}
+        <Button
+          variant="glass"
+          side={isBuy ? "buy" : "sell"}
+          size="lg"
+          block
+          disabled={!ready}
+          onClick={() => {
+            if (isBuy) {
+              setSide("buy");
+              onPlace(amount);
+            } else {
+              onSell(sellDirection, amount);
+              setSellInput(null);
+            }
+          }}
+        >
+          {isBuy
+            ? busy
+              ? "Placing…"
+              : signedIn
+                ? `Buy ${TONE[direction].label}`
+                : // Says what the tap does. A lit key reading "Buy Higher" that
+                  // produces a wallet dialog is a small lie, and the ticket under
+                  // it survives the sign-in — nothing composed here is lost.
+                  "Sign in to buy"
+            : selling
+              ? "Selling…"
+              : `Sell ${TONE[sellDirection].label}`}
+        </Button>
+        {/* Silent while the first quote is in flight: "no bid" is a claim about
+            the book, and a panel that makes it before it has asked is wrong for
+            the couple of hundred milliseconds anybody would actually read it. */}
+        {!ready && !(pricing && sale == null) && (
+          <p className="mt-2 mb-0 text-center text-[11px] text-muted">{refusal}</p>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+/**
+ * Buy or sell, as tabs along the foot of the ticket's plate.
+ *
+ * Underlined rather than a segmented key, because they are the plate's own edge:
+ * the bar under the chosen side sits on the seam, in the colour of the key at
+ * the bottom of the ticket — blue in, amber out.
+ */
+function SideTabs({ value, onChange }: { value: Side; onChange: (side: Side) => void }) {
+  return (
+    <div role="tablist" aria-label="Buy or sell" className="flex gap-4">
+      {SIDES.map((s) => {
+        const on = s.value === value;
+        return (
+          <button
+            key={s.value}
+            type="button"
+            role="tab"
+            aria-selected={on}
+            onClick={() => onChange(s.value)}
+            className={cx(
+              "border-b-2 bg-transparent px-0 pt-0.5 pb-2 text-sm transition-colors",
+              on
+                ? "mat-engrave font-semibold text-foreground"
+                : "border-transparent text-muted hover:text-foreground"
+            )}
+            style={on ? { borderColor: s.value === "buy" ? "var(--buy-ink)" : "var(--sell-ink)" } : undefined}
+          >
+            {s.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** What the order comes to: a caption and how it was priced, and the figure. */
+function Payout({
+  label,
+  detail,
+  value,
+  color,
+}: {
+  label: string;
+  detail: string;
+  value: string;
+  color: string;
+}) {
+  return (
+    <div className="mb-3 flex items-end justify-between gap-3">
+      <span className="min-w-0">
+        <span className="block text-sm text-foreground">{label}</span>
+        <span className="block font-mono text-[11px] tabular-nums text-muted">{detail}</span>
+      </span>
+      <span className="shrink-0 font-mono text-3xl leading-none tabular-nums" style={{ color }}>
+        {value}
+      </span>
+    </div>
   );
 }
 

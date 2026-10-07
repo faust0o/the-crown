@@ -12,8 +12,8 @@ import { cx } from "./cx";
  *
  * The case, the keys, the lamps and the wells all stay physical. What went flat
  * is the *containers* — a panel that floats above the page is a claim that you
- * could pick it up, and there are only two things in the app you can: a dialog,
- * and a menu.
+ * could pick it up, and there are only three things in the app you can: a
+ * dialog, a menu, and the ticket.
  */
 export function Section({
   title,
