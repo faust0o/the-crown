@@ -736,23 +736,23 @@ class Oracle {
   }
 
   /**
-   * Rank lines for the chart.
+   * Rank lines for the chart: the live board, plus the round's field wherever
+   * it has got to.
    *
-   * `symbols` pins which coins are drawn, and the caller passes the round's
-   * field. The chart used to take the live top-N instead, which got the
-   * membership wrong in both directions at once: a coin that opened the round
-   * and has since been pushed off the board vanished from the chart — while
-   * still being in the field, still holding positions, and still bettable, so
-   * the one line a player needed to watch was the one that disappeared — and a
-   * coin that trended into the top ten halfway through appeared on it, drawing a
-   * competitor in a race it is not running.
+   * `field` is the round's, and it is drawn on top of the board rather than in
+   * place of it. A coin that opened the round and has since been pushed off the
+   * board is still in the field, still holds positions, and is still bettable —
+   * the one line a player needs to watch — so it must not vanish when it drops.
    *
-   * The field is fixed when a round opens and does not change for its duration.
-   * That, not what is trending this minute, is what the chart is a picture of.
+   * A coin that trends into the top ten mid-round is drawn too, from the poll it
+   * arrives on. It used to be left out until the next round opened with it in
+   * the field, which hid a row the board was already showing and made the chart
+   * disagree with the table directly under it. The buffer samples the whole
+   * pool, so the line arrives with its climb rather than starting at the edge.
    */
-  rankHistory(minutes: number, symbols?: Iterable<string>, maxPoints = 120): RankPoint[] {
+  rankHistory(minutes: number, field?: Iterable<string>, maxPoints = 120): RankPoint[] {
     const since = Date.now() - minutes * 60_000;
-    const board = new Set(symbols ?? this.standings(BOARD_SIZE).map((s) => s.symbol));
+    const board = new Set([...this.standings(BOARD_SIZE).map((s) => s.symbol), ...(field ?? [])]);
     const window = this.history.filter((s) => s.t >= since);
     if (!window.length) return [];
 

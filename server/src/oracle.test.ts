@@ -7,11 +7,10 @@ import { BOARD_SIZE, POOL, oracle } from "./oracle/index";
  *
  * A round's field is fixed when it opens and does not change for its duration,
  * while the live board changes the moment anything moves. Those two sets come
- * apart in both directions at once, and the chart used to draw the wrong one:
- * a coin that opened in the field and was later pushed off the board vanished
- * from the chart while still being bettable and still holding positions, and a
- * coin that trended into the top ten mid-round appeared on it despite not being
- * in the race.
+ * apart in both directions at once, and the chart draws both: a coin that
+ * opened in the field and was later pushed off the board keeps its line while
+ * it is still bettable and still holding positions, and a coin that trended
+ * into the top ten mid-round gets one as soon as the board shows it.
  */
 
 /** A board, busiest first, from an ordering of symbols. */
@@ -33,6 +32,10 @@ const AFTER_SHUFFLE = board([
 
 const symbolsIn = (points: { symbol: string }[]) => [...new Set(points.map((p) => p.symbol))].sort();
 
+/** One coin's trail, out of everything the chart draws alongside it. */
+const trailOf = (symbol: string) =>
+  oracle.rankHistory(90, [symbol]).filter((p) => p.symbol === symbol);
+
 beforeEach(() => {
   // Nothing is owed a trail until a round says so, and the oracle is a
   // singleton — a field left tracked by one case would follow the next one.
@@ -40,7 +43,7 @@ beforeEach(() => {
   oracle.seedForTest(AT_OPEN);
 });
 
-describe("the chart draws the round's field", () => {
+describe("the chart draws the round's field and the live board", () => {
   it("keeps a coin that has been pushed off the board", () => {
     // C3 opened third and has collapsed to twelfth — below every visible slot.
     // It is still in the round, still bettable, and its LOWER line has in fact
@@ -54,12 +57,16 @@ describe("the chart draws the round's field", () => {
     const drawn = symbolsIn(oracle.rankHistory(90, FIELD));
 
     assert.ok(drawn.includes("C3"), `a dropped coin must stay on the chart: ${drawn.join(",")}`);
-    assert.deepEqual(drawn, [...FIELD].sort(), "and the field is drawn entire");
+    assert.ok(
+      FIELD.every((s) => drawn.includes(s)),
+      `and the field is drawn entire: ${drawn.join(",")}`
+    );
   });
 
-  it("leaves out a coin that trended in after the round opened", () => {
+  it("draws a coin that trended in after the round opened", () => {
     // C11 was outside the field when the round opened. It is now inside the
-    // visible ten, but it is not in this race and must not be drawn in it.
+    // visible ten, so it has a row on the board — and a line over it, now
+    // rather than once the next round opens with it in the field.
     oracle.seedForTest(AFTER_SHUFFLE);
     assert.ok(
       oracle.standings(BOARD_SIZE).some((s) => s.symbol === "C11"),
@@ -68,7 +75,8 @@ describe("the chart draws the round's field", () => {
 
     const drawn = symbolsIn(oracle.rankHistory(90, FIELD));
 
-    assert.ok(!drawn.includes("C11"), `a newcomer must not appear: ${drawn.join(",")}`);
+    assert.ok(drawn.includes("C11"), `a newcomer must be drawn: ${drawn.join(",")}`);
+    assert.ok(!drawn.includes("C12"), `but not a coin below the board: ${drawn.join(",")}`);
   });
 
   it("falls back to the live board when no round is open", () => {
@@ -83,7 +91,7 @@ describe("the chart draws the round's field", () => {
     // to agree with them or the picture contradicts the settlement.
     oracle.seedForTest(AFTER_SHUFFLE);
 
-    const c3 = oracle.rankHistory(90, ["C3"]);
+    const c3 = trailOf("C3");
     assert.ok(c3.length > 0, "the dropped coin must still have points");
     assert.ok(
       c3.every((p) => p.rank > BOARD_SIZE),
@@ -134,7 +142,7 @@ describe("the round's field is measured to the end", () => {
   });
 
   it("keeps recording it, at the rank it actually holds", () => {
-    const points = oracle.rankHistory(90, [RELEGATED]);
+    const points = trailOf(RELEGATED);
     assert.ok(points.length > 0, "its trail must not end where the pool does");
     assert.ok(
       points.every((p) => p.rank > POOL),
@@ -161,7 +169,7 @@ describe("the round's field is measured to the end", () => {
     assert.equal(standing?.rank, 1, "the busiest coin on the market leads the board");
     assert.equal(standing?.quoteVolume, busiest.volume);
 
-    const points = oracle.rankHistory(90, [busiest.symbol]);
+    const points = trailOf(busiest.symbol);
     assert.ok(points.length > 0, "its trail must not end where its eligibility does");
     assert.ok(
       points.every((p) => p.quoteVolume === busiest.volume && p.rank === 1),
@@ -199,6 +207,6 @@ describe("the round's field is measured to the end", () => {
     // below the pool is then just a coin below the pool.
     oracle.track([]);
     oracle.seedForTest(AFTER_COLLAPSE);
-    assert.deepEqual(oracle.rankHistory(90, [RELEGATED]), []);
+    assert.deepEqual(trailOf(RELEGATED), []);
   });
 });

@@ -55,15 +55,14 @@ export const queries = extendType({
     });
 
     /**
-     * The chart draws the round's field, not today's top ten.
+     * The chart draws today's top ten and the round's field together.
      *
-     * Those are different sets the moment the board moves, and the difference is
-     * the whole point of a round: a coin that opened in the field and has been
-     * pushed off the board is still bettable, still holds positions, and is
-     * exactly the one whose line a player needs — while a coin that trended into
-     * the top ten mid-round is not in this race at all. Membership therefore
-     * comes from the round; only when there is no live round does it fall back
-     * to the board, which is all there is to draw between rounds.
+     * Those are different sets the moment the board moves. A coin that opened in
+     * the field and has been pushed off the board is still bettable, still holds
+     * positions, and is exactly the one whose line a player needs; a coin that
+     * trended into the top ten mid-round is on the board under the chart, and
+     * gets its line the moment it arrives. Between rounds there is no field, and
+     * the board is all there is to draw.
      */
     t.nonNull.list.nonNull.field("cryptoRankHistory", {
       type: "CryptoRankPoint",
