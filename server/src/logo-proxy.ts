@@ -1,10 +1,12 @@
 import { isIP } from "node:net";
 import { lookup as dnsLookup } from "node:dns";
-import type { Express, Request, RequestHandler, Response } from "express";
 import { Agent, fetch as undiciFetch, type Response as UndiciResponse } from "undici";
 
 /**
- * Same-origin proxy for token logos.
+ * Fetching token logos without letting the fetch reach anything we own.
+ *
+ * `logo-store.ts` serves them from our own origin, and this is how it gets
+ * them.
  *
  * Logos come from arweave, per-content IPFS gateway subdomains and
  * raw.githubusercontent, and several send no `Access-Control-Allow-Origin`.
@@ -194,87 +196,126 @@ async function readCapped(res: Response_): Promise<Buffer | null> {
   return Buffer.concat(chunks);
 }
 
-export function serveLogoProxy(app: Express, limiter: RequestHandler): void {
-  app.get("/logo", limiter, async (req: Request, res: Response) => {
-    const raw = typeof req.query.u === "string" ? req.query.u : "";
-    let url: URL;
-    try {
-      url = new URL(raw);
-    } catch {
-      res.status(400).end();
-      return;
+/**
+ * IPFS gateways to fall back on, in order, when a logo's own gateway will not
+ * serve it.
+ *
+ * Measured, not chosen: `ipfs.io`, `dweb.link` and `w3s.link` — one operator's
+ * infrastructure under three names — answered every request from this server
+ * with 429, which was a third of the board's IPFS logos on any given load,
+ * including cbBTC's and PUMP's. These two served the same content IDs without
+ * complaint. Content addressing is what makes a substitution safe: a CID names
+ * the bytes, so any gateway that returns them returns the same image.
+ */
+const IPFS_GATEWAYS = ["https://gateway.pinata.cloud/ipfs/", "https://4everland.io/ipfs/"];
+
+/** The `<cid>[/path]` a gateway URL names, in either the path or the subdomain form. */
+function ipfsPath(url: URL): string | null {
+  const inPath = /^\/ipfs\/(.+)$/.exec(url.pathname);
+  if (inPath) return inPath[1];
+  const inHost = /^([a-z0-9]+)\.ipfs\./i.exec(url.hostname);
+  if (inHost) return inHost[1] + (url.pathname === "/" ? "" : url.pathname);
+  return null;
+}
+
+/** Where a logo can be fetched from: its own URL first, then any equivalent. */
+export function sourcesFor(url: URL): URL[] {
+  const path = ipfsPath(url);
+  if (!path) return [url];
+  const alternates = IPFS_GATEWAYS.map((g) => new URL(g + path)).filter((u) => u.href !== url.href);
+  return [url, ...alternates];
+}
+
+/**
+ * What an image actually is, from its first bytes — for a response that did
+ * not say.
+ *
+ * Arweave serves some files with no `Content-Type` at all, and a proxy that
+ * only trusts the header refuses them: PENGU's and TRUMP's logos were a PNG and
+ * a JPEG that came back 415 on every load. Only consulted when the declared type
+ * is not an image type we serve, and only ever answers with one of those, so a
+ * body can be let in this way but never turned into anything else.
+ */
+export function sniffImageType(body: Uint8Array): string | null {
+  const b = Buffer.from(body.buffer, body.byteOffset, body.byteLength);
+  const ascii = (start: number, end: number) => b.subarray(start, end).toString("latin1");
+  if (b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return "image/png";
+  }
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  if (ascii(0, 6) === "GIF87a" || ascii(0, 6) === "GIF89a") return "image/gif";
+  if (ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP") return "image/webp";
+  if (ascii(4, 8) === "ftyp" && /^avi[fs]$/.test(ascii(8, 12))) return "image/avif";
+  if (b.length >= 4 && b[0] === 0 && b[1] === 0 && b[2] === 1 && b[3] === 0) return "image/x-icon";
+  const head = b.subarray(0, 1024).toString("utf8").replace(/^\uFEFF/, "").trimStart();
+  if (head.startsWith("<") && /<svg[\s>]/i.test(head)) return "image/svg+xml";
+  return null;
+}
+
+/** A logo, ready to serve. */
+export interface Logo {
+  type: string;
+  body: Buffer;
+}
+
+/** One source, through the guard, following redirects by hand. */
+async function fetchOne(start: URL): Promise<Logo> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    let url = start;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      if (!vetUrl(url)) throw new Error(`refused ${url.protocol}//${url.hostname}`);
+      const res = await undiciFetch(url, {
+        signal: controller.signal,
+        redirect: "manual",
+        headers: { accept: "image/*" },
+        dispatcher: guardedAgent,
+      });
+
+      // Followed by hand so the next hop meets the same scheme check this one
+      // did — `redirect: "follow"` would happily walk to an http:// URL. The
+      // address check needs no help: it is in the dispatcher, so it applies to
+      // every hop whether we look at it or not.
+      const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+      if (location) {
+        await res.body?.cancel();
+        url = new URL(location, url);
+        continue;
+      }
+      if (!res.ok) {
+        await res.body?.cancel();
+        throw new Error(`${res.status} from ${url.hostname}`);
+      }
+
+      const body = await readCapped(res);
+      if (!body) throw new Error(`oversized or empty body from ${url.hostname}`);
+      const declared = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+      const type = IMAGE_TYPES.has(declared) ? declared : sniffImageType(body);
+      if (!type) throw new Error(`not an image (${declared || "no type"}) from ${url.hostname}`);
+      return { type, body };
     }
+    throw new Error("too many redirects");
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+/**
+ * Fetch a token's logo from wherever it can be had.
+ *
+ * Every source goes through the same guard — scheme, address at connect time,
+ * redirects, size, type — so an alternate gateway is held to exactly what the
+ * original would have been. Throws with every source's reason when none works.
+ */
+export async function fetchLogo(raw: string): Promise<Logo> {
+  const reasons: string[] = [];
+  for (const source of sourcesFor(new URL(raw))) {
     try {
-      let upstream: Response_ | null = null;
-      for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-        if (!vetUrl(url)) {
-          res.status(403).end();
-          return;
-        }
-        const hopRes = await undiciFetch(url, {
-          signal: controller.signal,
-          redirect: "manual",
-          headers: { accept: "image/*" },
-          dispatcher: guardedAgent,
-        });
-
-        // Follow it ourselves so the next hop meets the same scheme check this
-        // one did — `redirect: "follow"` would happily walk to an http:// URL.
-        // The address check needs no help here: it is in the dispatcher, so it
-        // applies to every hop whether we look at it or not.
-        const location =
-          hopRes.status >= 300 && hopRes.status < 400
-            ? hopRes.headers.get("location")
-            : null;
-        if (!location) {
-          upstream = hopRes;
-          break;
-        }
-        const from = url;
-        await hopRes.body?.cancel();
-        try {
-          url = new URL(location, from);
-        } catch {
-          res.status(502).end();
-          return;
-        }
-      }
-
-      if (!upstream) {
-        res.status(502).end(); // ran out of hops
-        return;
-      }
-      if (!upstream.ok) {
-        res.status(502).end();
-        return;
-      }
-
-      const type = (upstream.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-      if (!IMAGE_TYPES.has(type)) {
-        await upstream.body?.cancel();
-        res.status(415).end();
-        return;
-      }
-
-      const body = await readCapped(upstream);
-      if (!body) {
-        res.status(502).end();
-        return;
-      }
-
-      res.setHeader("Content-Type", type);
-      // A body that lied about its type must not become script on our origin.
-      res.setHeader("X-Content-Type-Options", "nosniff");
-      res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
-      res.setHeader("Cache-Control", "public, max-age=86400, immutable");
-      res.end(body);
-    } catch {
-      res.status(504).end();
-    } finally {
-      clearTimeout(timer);
+      return await fetchOne(source);
+    } catch (err) {
+      reasons.push(err instanceof Error ? err.message : String(err));
     }
-  });
+  }
+  throw new Error(reasons.join("; "));
 }

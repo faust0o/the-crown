@@ -153,7 +153,7 @@ async function main() {
     })
   );
 
-  serveLogoProxy(app, logoLimiter);
+  serveLogos(app, logoLimiter);
   serveClient(app);
 
   // A connection that opens and then dribbles bytes holds a socket for as long
