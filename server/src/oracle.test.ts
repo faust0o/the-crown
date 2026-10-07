@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { beforeEach, describe, it } from "node:test";
-import { BOARD_SIZE, oracle } from "./oracle/index";
+import { BOARD_SIZE, POOL, oracle } from "./oracle/index";
 
 /**
  * What the chart is a picture of.
@@ -33,7 +33,12 @@ const AFTER_SHUFFLE = board([
 
 const symbolsIn = (points: { symbol: string }[]) => [...new Set(points.map((p) => p.symbol))].sort();
 
-beforeEach(() => oracle.seedForTest(AT_OPEN));
+beforeEach(() => {
+  // Nothing is owed a trail until a round says so, and the oracle is a
+  // singleton — a field left tracked by one case would follow the next one.
+  oracle.track([]);
+  oracle.seedForTest(AT_OPEN);
+});
 
 describe("the chart draws the round's field", () => {
   it("keeps a coin that has been pushed off the board", () => {
@@ -84,5 +89,116 @@ describe("the chart draws the round's field", () => {
       c3.every((p) => p.rank > BOARD_SIZE),
       `and they must sit below the board: ${c3.map((p) => p.rank).join(",")}`
     );
+  });
+});
+
+/**
+ * A round is a promise to follow ten named coins until it ends.
+ *
+ * Relegation is the outcome the round is scored on, not a reason to stop
+ * measuring: a coin can be pushed off the board, and then out of the ranking
+ * pool altogether, while trading the whole time. Every list the oracle kept
+ * ended at one of those two steps, so the coin's numbers came back as zero —
+ * a live market reported as a dead one, for exactly the coins a player is
+ * watching hardest.
+ */
+describe("the round's field is measured to the end", () => {
+  /** Busiest first, with enough room above zero for a universe this deep. */
+  const deep = (order: string[]) =>
+    order.map((symbol, i) => ({ symbol, volume: 10_000 - i * 100 }));
+
+  /** A universe deeper than the pool, so the last coins in it are unranked. */
+  const DEEP = deep(Array.from({ length: POOL + 6 }, (_, i) => `D${i + 1}`));
+  /** The field opened on the board; D2 has since collapsed to the very bottom. */
+  const RELEGATED = "D2";
+  const AFTER_COLLAPSE = deep([
+    ...DEEP.map((c) => c.symbol).filter((s) => s !== RELEGATED),
+    RELEGATED,
+  ]);
+  const FIELD_OF = DEEP.slice(0, BOARD_SIZE).map((c) => c.symbol);
+
+  beforeEach(() => {
+    oracle.track(FIELD_OF);
+    oracle.seedForTest(AFTER_COLLAPSE);
+  });
+
+  it("still holds its numbers once it is past the pool", () => {
+    assert.ok(
+      !oracle.standings(POOL).some((s) => s.symbol === RELEGATED),
+      "precondition: it has fallen out of the ranking pool, not just the board"
+    );
+
+    const token = oracle.tokenFor(RELEGATED);
+    assert.ok(token, "a coin nobody ranks is still a coin somebody bet on");
+    assert.ok(token!.volume > 0, `and it is still trading: ${token!.volume}`);
+  });
+
+  it("keeps recording it, at the rank it actually holds", () => {
+    const points = oracle.rankHistory(90, [RELEGATED]);
+    assert.ok(points.length > 0, "its trail must not end where the pool does");
+    assert.ok(
+      points.every((p) => p.rank > POOL),
+      `and it stands where it stands: ${points.map((p) => p.rank).join(",")}`
+    );
+    assert.ok(
+      points.every((p) => p.quoteVolume > 0),
+      "with the volume that is the reason it fell, which is what says whether it is coming back"
+    );
+  });
+
+  it("keeps ranking a field coin that stops qualifying to race", () => {
+    // Not every coin that leaves the eligible set was relegated. Eligibility is
+    // checked on every poll, and a coin can fail it — a liquidity reading of $5,
+    // or $240k, against a floor of $250k, on a coin turning over millions an
+    // hour — while trading throughout. That is not an outcome, so it must not
+    // decide one: the coin stays on the board where its volume puts it, which is
+    // also where the cut will score it.
+    const [busiest, ...rest] = AFTER_COLLAPSE;
+    oracle.track(FIELD_OF);
+    oracle.seedForTest([{ ...busiest, racing: false }, ...rest]);
+
+    const standing = oracle.standings(BOARD_SIZE).find((s) => s.symbol === busiest.symbol);
+    assert.equal(standing?.rank, 1, "the busiest coin on the market leads the board");
+    assert.equal(standing?.quoteVolume, busiest.volume);
+
+    const points = oracle.rankHistory(90, [busiest.symbol]);
+    assert.ok(points.length > 0, "its trail must not end where its eligibility does");
+    assert.ok(
+      points.every((p) => p.quoteVolume === busiest.volume && p.rank === 1),
+      `and it is drawn where it stands: ${points.map((p) => `${p.rank}@${p.quoteVolume}`).join(",")}`
+    );
+  });
+
+  it("still keeps an ineligible coin out of a field it is not in", () => {
+    // The exemption is the field's, not the coin's. Between rounds, or for a coin
+    // the round never named, the floor applies as it always has — that is what
+    // stops a thin book being raced in the first place.
+    const [busiest, ...rest] = AFTER_COLLAPSE;
+    oracle.track(FIELD_OF.filter((s) => s !== busiest.symbol));
+    oracle.seedForTest([{ ...busiest, racing: false }, ...rest]);
+    assert.ok(!oracle.standings(POOL).some((s) => s.symbol === busiest.symbol));
+  });
+
+  it("drops the exemption the moment the field is released", () => {
+    // `currentRound` releases the field before it snapshots the next one, and
+    // that snapshot is read straight after — not at the next poll.
+    const [busiest, ...rest] = AFTER_COLLAPSE;
+    oracle.track(FIELD_OF);
+    oracle.seedForTest([{ ...busiest, racing: false }, ...rest]);
+    assert.equal(oracle.standings(BOARD_SIZE)[0].symbol, busiest.symbol, "precondition");
+
+    oracle.track([]);
+    assert.ok(
+      !oracle.standings(POOL).some((s) => s.symbol === busiest.symbol),
+      "a new round's field is chosen on eligibility alone"
+    );
+  });
+
+  it("measures nothing extra once the round is over", () => {
+    // The field is the live round's, and between rounds there isn't one. A coin
+    // below the pool is then just a coin below the pool.
+    oracle.track([]);
+    oracle.seedForTest(AFTER_COLLAPSE);
+    assert.deepEqual(oracle.rankHistory(90, [RELEGATED]), []);
   });
 });

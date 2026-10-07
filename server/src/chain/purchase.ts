@@ -1,6 +1,7 @@
 import { LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 
 import type { PrismaClient } from "../generated/prisma";
+import { mainnetRpcUrl } from "./mainnet";
 import { COMMITMENT, connection, keypairFrom } from "./program";
 
 /**
@@ -21,8 +22,8 @@ import { COMMITMENT, connection, keypairFrom } from "./program";
  * after that — betting, closing, settling — happens on the balance the account
  * already had. There is no delegation, no allowance, and nothing to revoke.
  *
- * The desks still trade on chain. That is where the book and its settlement
- * live, and none of it depended on the player holding a delegation.
+ * The book and its settlement live on chain, and none of it ever depended on the
+ * player holding a delegation.
  *
  * ## Why this is a purchase and not a mint button
  *
@@ -40,31 +41,76 @@ const MIN_CREDITS = Number(process.env.CROWN_MIN_PURCHASE_CREDITS ?? 1);
 /** Largest, so a fat-fingered amount cannot empty a wallet in one prompt. */
 const MAX_CREDITS = Number(process.env.CROWN_MAX_PURCHASE_CREDITS ?? 100_000);
 
+/** Wrapped SOL — the mint a price for SOL is quoted against. */
+const WSOL_MINT = "So11111111111111111111111111111111111111112";
+
 let priceCache: { at: number; usd: number } | null = null;
+
+/**
+ * Which endpoint is asked what SOL costs.
+ *
+ * Helius quotes a price inside `getAsset`, so the key the server already holds
+ * for the chain is the entire configuration — no market-data provider, nothing
+ * separate to keep paid up. This used to read tokens.xyz, which the board
+ * dropped when it started serving day-old numbers labelled fresh; the key went
+ * with it, and this was the last caller. That is why buying credits failed with
+ * "no price feed" on a server that was otherwise configured correctly.
+ *
+ * Mainnet, whichever chain the game itself is on — see `mainnet.ts`.
+ */
+function priceRpcUrl(): string {
+  try {
+    return mainnetRpcUrl();
+  } catch {
+    throw new Error("No price feed is configured — set CROWN_PRICE_RPC_URL to a mainnet RPC.");
+  }
+}
 
 /**
  * What one SOL is worth, in dollars.
  *
- * From the same upstream the board's oracle uses, so the game has one opinion
- * about what things cost. Throws rather than falling back to a constant: a stale
- * hardcoded price keeps selling credits at last month's rate, which loses money
- * quietly, where refusing costs a retry and is obvious.
+ * Throws rather than falling back to a constant: a stale hardcoded price keeps
+ * selling credits at last month's rate, which loses money quietly, where
+ * refusing costs a retry and is obvious.
  */
 export async function solPriceUsd(): Promise<number> {
   if (priceCache && Date.now() - priceCache.at < PRICE_TTL_MS) return priceCache.usd;
 
-  const key = process.env.TOKENS_XYZ_SECRET;
-  if (!key) throw new Error("No price feed is configured.");
-
-  const res = await fetch(
-    "https://api.tokens.xyz/v1/assets/So11111111111111111111111111111111111111112",
-    { headers: { "x-api-key": key }, signal: AbortSignal.timeout(8_000) }
-  );
+  const res = await fetch(priceRpcUrl(), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: "sol-price",
+      method: "getAsset",
+      params: { id: WSOL_MINT },
+    }),
+    signal: AbortSignal.timeout(8_000),
+  });
   if (!res.ok) throw new Error("The price feed is unavailable.");
 
-  const body = (await res.json()) as { asset?: { stats?: { price?: number } } };
-  const usd = body.asset?.stats?.price;
+  const body = (await res.json()) as {
+    error?: { message?: string };
+    result?: { token_info?: { price_info?: { price_per_token?: number; currency?: string } } };
+  };
+  // A JSON-RPC error arrives as a 200 with the reason in the body — an
+  // exhausted plan reads as "max usage reached" rather than a 429 — so the
+  // status alone says nothing, and the reason is worth carrying up.
+  if (body.error) {
+    throw new Error(`The price feed is unavailable: ${body.error.message ?? "rpc error"}`);
+  }
+
+  const quote = body.result?.token_info?.price_info;
+  const usd = quote?.price_per_token;
   if (!usd || !Number.isFinite(usd) || usd <= 0) throw new Error("The price feed returned no price.");
+
+  // Helius quotes against USDC and a credit is a dollar. Anything else is an
+  // answer to a different question, and multiplying by it would sell credits at
+  // a rate nobody chose.
+  const currency = (quote?.currency ?? "").toUpperCase();
+  if (currency && currency !== "USDC" && currency !== "USD") {
+    throw new Error(`The price feed quoted ${currency}, not dollars.`);
+  }
 
   priceCache = { at: Date.now(), usd };
   return usd;

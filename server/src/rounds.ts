@@ -1,7 +1,7 @@
 import { createHash, randomBytes, createHmac } from "node:crypto";
 import { prisma } from "./prisma";
 import { closeBook, openRound, type RoundBook } from "./market";
-import { oracle, BOARD_SIZE } from "./oracle/index";
+import { oracle, BOARD_SIZE, type Standing } from "./oracle/index";
 
 /**
  * Round length. Rounds are wall-clock aligned, so at 30 minutes they open on
@@ -14,6 +14,41 @@ export const CUT_WINDOW_SECONDS = Number(process.env.CUT_WINDOW_SECONDS ?? 60);
 
 const ROUND_MS = ROUND_MINUTES * 60_000;
 const CUT_MS = CUT_WINDOW_SECONDS * 1_000;
+
+/**
+ * How long a cut may wait, past its committed instant, for a live reading of
+ * the market taken at or after that instant. Past this the round is refunded.
+ */
+export const CUT_GRACE_MS = Number(process.env.CUT_GRACE_SECONDS ?? 120) * 1_000;
+
+/**
+ * What a round whose cut is due should do with the board the oracle holds.
+ *
+ * **Record** only from a live reading that describes the market at or after the
+ * committed instant. The cut used to take whatever `standings()` returned, with
+ * no question asked of it: a frozen feed settled the round on numbers from
+ * before betting closed — which a player could have read while betting — and an
+ * empty board scored every coin as relegated, paying every LOWER bet on the
+ * board. Neither is a result.
+ *
+ * **Wait** while one may still arrive. The upstream publishes every fifteen
+ * seconds or so, describing the market as of a few seconds before, so the
+ * reading that settles a round is normally the first or second one after its
+ * instant.
+ *
+ * **Void** once it has had `CUT_GRACE_MS` to arrive and has not. The round is
+ * cut with no ranks at all, which settlement already refunds: a round decided
+ * by nobody is better paid back than decided by a stale guess.
+ */
+export function cutDecision(
+  now: number,
+  cutAt: number,
+  feed: { live: boolean; describes: number }
+): "record" | "wait" | "void" {
+  if (now < cutAt) return "wait";
+  if (feed.live && feed.describes >= cutAt) return "record";
+  return now - cutAt >= CUT_GRACE_MS ? "void" : "wait";
+}
 
 /** Rounds start on wall-clock boundaries so the schedule is predictable. */
 export function roundStartFor(now: number): Date {
@@ -43,10 +78,15 @@ export const commitmentOf = (seed: string) =>
  *
  * Null before any round has been cut, which leaves the whole board bettable for
  * the very first round.
+ *
+ * Asked of the rounds that crowned somebody, not of the rounds that were cut: a
+ * refunded round is cut with no ranks, and taking the latest cut would have
+ * handed the crown to nobody — and the whole board back to the bettors — every
+ * time the feed failed at a cut.
  */
 export async function reigningCrown(): Promise<string | null> {
   const last = await prisma.round.findFirst({
-    where: { cutAt: { not: null } },
+    where: { entries: { some: { cutRank: 1 } } },
     orderBy: { startsAt: "desc" },
     include: { entries: { where: { cutRank: 1 }, take: 1 } },
   });
@@ -68,6 +108,17 @@ export async function reigningCrown(): Promise<string | null> {
 function withBook<T extends RoundBook | null>(round: T): T {
   if (round) openRound(round);
   else closeBook();
+  // And tell the oracle which coins it owes a trail to.
+  //
+  // The oracle measures the top of the market; a round is a promise to follow
+  // ten named coins until it ends, and the two stop agreeing the moment one of
+  // them is relegated. Everything about that coin — its volume on the board, its
+  // line on the chart, its row in the history the replay reads — used to stop
+  // there, reported as "$0", which says the market died when what happened is
+  // the thing the round is scored on. Asserted here for the same reason the book
+  // is: this is the one call every path that cares about the live round already
+  // makes, so an API poll, the round loop and the chain runner all keep it true.
+  oracle.track(round?.entries.map((e) => e.symbol) ?? []);
   return round;
 }
 
@@ -90,6 +141,11 @@ export async function currentRound() {
     include,
   });
   if (live) return withBook(live);
+  // No round is live, so no coin is still being scored — and the field this
+  // round is about to snapshot must be chosen on eligibility alone. Left
+  // tracked, the round that just ended would carry its coins' exemption from
+  // the liquidity floor straight into the next one's field.
+  oracle.track([]);
 
   const startsAt = roundStartFor(now);
   // Rounds always begin on a wall-clock boundary — on the hour at the default
@@ -102,7 +158,11 @@ export async function currentRound() {
   if (taken) return withBook(null);
 
   const standings = oracle.standings(BOARD_SIZE);
-  if (!standings.length) return withBook(null); // oracle not warm yet — don't open an empty round
+  // Not warm yet, or not current. An empty board opens an empty round, and a
+  // stale one — the last board on disk, after a restart that cannot reach the
+  // upstream — opens a round whose starting ranks nobody can check, priced off
+  // a market that has since moved. The next tick tries again.
+  if (!standings.length || !oracle.isLive()) return withBook(null);
 
   const crownSymbol = await reigningCrown();
   const seed = randomBytes(32).toString("hex");
@@ -183,8 +243,18 @@ export async function tickRounds(): Promise<void> {
         round.lockAt.getTime() +
           cutOffsetMs(round.seed, round.id, round.cutWindowSeconds * 1000)
       );
-      if (now < cutAt) continue;
-      await recordCut(round.id, cutAt);
+      const decision = cutDecision(now.getTime(), cutAt.getTime(), {
+        live: oracle.isLive(),
+        describes: oracle.updatedAt,
+      });
+      if (decision === "wait") continue;
+      if (decision === "void") {
+        console.warn(
+          `⚠  round ${round.id}: no live reading of the market within ` +
+            `${CUT_GRACE_MS / 1000}s of its cut — every bet on it is refunded`
+        );
+      }
+      await recordCut(round.id, cutAt, decision === "record" ? oracle.standings(BOARD_SIZE) : null);
       round.status = "CUT";
     }
 
@@ -194,10 +264,15 @@ export async function tickRounds(): Promise<void> {
   }
 }
 
-/** Freeze the live board into the round's entries. */
-async function recordCut(roundId: string, cutAt: Date): Promise<void> {
-  const standings = oracle.standings(BOARD_SIZE);
-  const bySymbol = new Map(standings.map((s) => [s.symbol, s]));
+/**
+ * Freeze the board into the round's entries.
+ *
+ * With no board, freeze nothing: the round is still cut, so it moves on to
+ * settlement like any other, but every entry is left unranked — and settlement
+ * refunds a bet whose coin has no cut rank. See `cutDecision`.
+ */
+async function recordCut(roundId: string, cutAt: Date, standings: Standing[] | null): Promise<void> {
+  const bySymbol = new Map((standings ?? []).map((s) => [s.symbol, s]));
 
   await prisma.$transaction(async (tx) => {
     const claimed = await tx.round.updateMany({
@@ -205,6 +280,7 @@ async function recordCut(roundId: string, cutAt: Date): Promise<void> {
       data: { status: "CUT", cutAt },
     });
     if (claimed.count !== 1) return; // another worker got there first
+    if (!standings) return;
 
     const entries = await tx.roundEntry.findMany({ where: { roundId } });
     for (const e of entries) {
@@ -214,7 +290,13 @@ async function recordCut(roundId: string, cutAt: Date): Promise<void> {
         // Dropping off the board counts as falling below its last visible slot.
         data: {
           cutRank: now?.rank ?? BOARD_SIZE + 1,
-          cutVolume: now?.quoteVolume ?? 0,
+          // Rank and volume are not the same kind of number, and falling off the
+          // board only settles the first of them. `BOARD_SIZE + 1` is a rule
+          // about what a relegated coin is scored at; the volume is a
+          // measurement of a coin that is still trading, and taking it off the
+          // board wrote 0 for precisely the coins whose demotion the round was
+          // about — the cut's own record of the race then said they had stopped.
+          cutVolume: now?.quoteVolume ?? oracle.tokenFor(e.symbol)?.volume ?? 0,
         },
       });
     }
@@ -231,10 +313,11 @@ function outcomeOf(startRank: number, cutRank: number): "HIGHER" | "DRAW" | "LOW
  * Pay out every bet on the round, then publish the seed.
  *
  * Decided in memory and written in a fixed number of statements, whatever the
- * size of the round. It used to be a transaction per bet, which was fine when a
- * round held a handful of player bets and is not fine now that the desks put
- * thousands through: at 0.3ms a bet, two thousand bets spent six-tenths of a
- * second of round-trips inside a loop that runs every second.
+ * size of the round. It used to be a transaction per bet, which is fine for a
+ * round holding a handful of bets and stops being fine at a busy one: at 0.3ms a
+ * bet, two thousand bets spent six-tenths of a second of round-trips inside a
+ * loop that runs every second. The shape has to hold at the size a round can
+ * reach, not at the size most of them do.
  *
  * The round's own CUT → SETTLED flip is the claim, taken first and inside the
  * transaction, so two workers cannot both pay the same round and a crash

@@ -1,54 +1,62 @@
+import { hasMainnetRpc, mainnetSlot } from "../chain/mainnet";
+import { warmLogo } from "../logo-store";
 import { prisma } from "../prisma";
-import { fetchTrending, hasKey, VOLUME_FIELD, type TrendingToken } from "./birdeye";
+import { fetchTrending, UpstreamError, WINDOW, type TrendingToken } from "./jupiter";
 
 /** How many tokens compete. */
 export const BOARD_SIZE = 10;
-/** Universe size to rank over — the board is the top BOARD_SIZE of these. */
-const POOL = 24;
 /**
- * How often the board is re-ranked.
+ * Universe size to rank over — the board is the top BOARD_SIZE of these.
  *
- * The upstream recomputes about once every 60s: volume1h and price moved for
- * 18/20 and 13/20 tokens at the 60s mark, and for none at all at 15s or 30s.
- * Every request is `x-vercel-cache: MISS` with `age: 0`, so we always reach
- * origin and no amount of polling makes it fresher than that recompute — the
- * only thing we control is how soon we notice. 10s gets us within 10 seconds of
- * a new value at 6 requests a minute, which is polite given they publish no
- * rate-limit headers.
+ * Exported for the tests, which have to be able to put a coin past it: the pool
+ * is where a relegated coin used to stop being measured, so "below the pool" is
+ * the case worth writing down.
  */
+export const POOL = 24;
 /**
- * How often to ask the upstream for a new board.
+ * When to ask the upstream for a new board: as soon as it has one, and no
+ * sooner.
  *
- * Sixty seconds, and the number is set by billing rather than by taste. Birdeye
- * prices in compute units against a monthly allowance, and `/defi/v3/token/list`
- * is one of the dearer endpoints — this polled every ten seconds when it was
- * ported across from a source that charged per request, which is 8,640 calls a
- * day, and the month's allowance went in hours. The board then served nothing at
- * all, which is a far worse outcome than a board that is a minute behind.
+ * Measured rather than chosen. Jupiter recomputes its token stats about every
+ * fifteen seconds and serves them from a cache that says so — `max-age=15`,
+ * with an `age` counting up to it — on the keyed host and the keyless one
+ * alike. Polling every two seconds returned the same body seven times running,
+ * so a fixed fast poll spends the rate limit on copies of a reading already in
+ * hand. Instead each poll lands just after the copy in hand expires, which
+ * picks up every new reading within about a second of it existing, at four
+ * requests a minute.
  *
- * A minute is plenty for what is being measured. The ranking metric is an hour's
- * volume, so it moves slowly by construction, and a thirty-minute round still
- * gets thirty points on its chart.
+ * The bounds are for a cache header that is missing or wrong: never ask more
+ * often than `MIN_POLL_MS`, never go longer than `MAX_POLL_MS` without asking.
  */
-const POLL_MS = Number(process.env.ORACLE_POLL_MS ?? 60_000);
+const MIN_POLL_MS = Number(process.env.ORACLE_MIN_POLL_MS ?? 2_000);
+const MAX_POLL_MS = Number(process.env.ORACLE_MAX_POLL_MS ?? 30_000);
+/** What to assume when the upstream sends no cache header at all. */
+const DEFAULT_POLL_MS = 15_000;
+/** How long after the cached copy expires to ask, so we get the next one. */
+const EXPIRY_SLACK_MS = 500;
+/** The longest a failing upstream is left between attempts. */
+const MAX_BACKOFF_MS = 60_000;
+/** Solana's slot time, for turning a lag in slots into one in milliseconds. */
+const SLOT_MS = 400;
+
 /**
  * In-memory history for the chart. Must outlast a whole round — the chart shows
  * the market's full runtime, not the visitor's session, so a viewer arriving at
  * minute 50 still sees the first 50 minutes.
  */
 const HISTORY_MINUTES = Number(process.env.ORACLE_HISTORY_MINUTES ?? 90);
-const HISTORY_POINTS = Math.ceil((HISTORY_MINUTES * 60_000) / POLL_MS);
 
 /**
- * How old the upstream's own numbers may be before the board stops calling
- * itself live.
+ * How old the numbers may be before the board stops calling itself live — and
+ * before a round may open or be cut on it.
  *
- * Generous, because a feed that recomputes every few minutes is normal and a
- * board that cried stale at every gap would be noise. Anything past this is not
- * a gap — it is a feed that has stopped, which has happened, for hours, while
- * every part of this app reported "live".
+ * Two minutes, against a feed that produces a reading every fifteen seconds
+ * describing the market as of fifteen to thirty seconds ago. That is several
+ * missed readings of slack, and nowhere near the hours a feed has actually been
+ * frozen for while every part of this app reported "live".
  */
-const STALE_AFTER_MS = Number(process.env.ORACLE_STALE_AFTER_MS ?? 15 * 60_000);
+const STALE_AFTER_MS = Number(process.env.ORACLE_STALE_AFTER_MS ?? 2 * 60_000);
 
 /**
  * How often a poll also tidies the sample table, and how much slack it leaves.
@@ -60,7 +68,7 @@ const STALE_AFTER_MS = Number(process.env.ORACLE_STALE_AFTER_MS ?? 15 * 60_000);
 const PRUNE_ODDS = 0.02;
 const PRUNE_KEEP_FACTOR = 3;
 
-export const WINDOW_LABEL = VOLUME_FIELD.replace("volume", "").replace("USD", "");
+export const WINDOW_LABEL = WINDOW;
 
 export interface Standing {
   symbol: string;
@@ -115,28 +123,66 @@ interface Sample {
 }
 
 /**
- * Live ranking oracle backed by tokens.xyz.
+ * Live ranking oracle backed by Jupiter's token index.
  *
- * Ranks the trending pool by volume over a short window (see VOLUME_FIELD) and
- * republishes the board on a timer. Everything downstream — rounds, the cut,
+ * Ranks the trending pool by volume over a short window (see `WINDOW`) and
+ * republishes the board whenever the upstream has a new reading. Everything downstream — rounds, the cut,
  * settlement — reads `standings()` and is agnostic to where the numbers came
  * from.
  */
 class Oracle {
   private tokens: TrendingToken[] = [];
+  /**
+   * Every token the upstream reported, busiest first, racing or not. Wider than
+   * the pool on purpose, and wider than the racers too: a coin's numbers have to
+   * survive both of the things that can happen to it mid-round — being relegated
+   * past the pool, and failing an eligibility test for a poll or two.
+   */
+  private watched: TrendingToken[] = [];
+  /**
+   * The racing subset of `watched`, busiest first — plus the live round's field,
+   * eligible or not (see `rerank`). This is what a rank *is*, and it is
+   * deliberately not the same list as the one above: the board is a standing
+   * among competitors, while a lookup is a measurement of a coin.
+   */
+  private ranked: TrendingToken[] = [];
+  /** Keyed over `watched`, so a lookup outlives both of those. */
   private bySymbol = new Map<string, TrendingToken>();
+  /**
+   * The live round's field: symbols this oracle owes a continuous trail to
+   * until the round ends, wherever they are on the board.
+   *
+   * The board is a top ten and everything downstream was written against it, so
+   * a coin pushed out of it stopped being measured at exactly the moment its
+   * round was about — no history sample, no persisted volume, and a row that
+   * read "$0" for a coin that was still trading. Set by `track()`.
+   */
+  private tracked = new Set<string>();
   /**
    * Every token we've ever seen, not just the ones in the pool right now.
    * Hydrated from `Token` at boot and never evicted — see `remember`.
    */
   private readonly meta = new Map<string, TokenMeta>();
   private readonly history: Sample[] = [];
-  private timer: ReturnType<typeof setInterval> | null = null;
-  private inFlight = false;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private running = false;
+  /** Consecutive failed polls, for the backoff. */
+  private failures = 0;
 
   status: "starting" | "live" | "stale" | "degraded" = "starting";
-  /** When the upstream last published numbers that differed from the previous poll. */
+  /**
+   * The moment the numbers we hold describe.
+   *
+   * The older of two clocks: Jupiter's own stamp for when it computed them, and
+   * — when a mainnet RPC is configured — the slot its prices were read at,
+   * measured against the slot the chain has actually reached. The second is the
+   * one that cannot be mislabelled, which is the way the last two upstreams
+   * failed: a freshly generated response carrying frozen numbers still carries
+   * frozen slots.
+   */
   updatedAt = 0;
+  /** How far behind the chain the pool's prices were at the last poll, or null with no mainnet RPC. */
+  lagMs: number | null = null;
   /**
    * The upstream's own timestamp for the numbers we are holding.
    *
@@ -189,13 +235,27 @@ class Oracle {
     // in-memory `record()` honoured that and the persisted copy did not — and
     // the chart reads the persisted copy.
     const at = new Date(this.asOf || Date.now());
+    // **The board, plus whatever the live round has left on it.**
+    //
+    // Only the top BOARD_SIZE was written, which made relegation look like
+    // delisting in the one copy that outlives the process: the moment a coin
+    // dropped out its row stopped being recorded, so the replay had no volume
+    // for it at the cut and a restart mid-round came back holding a board that
+    // had never heard of it. `sampleAt` adds the round's field back, and there
+    // are at most a handful of those off the board at once — a few rows a
+    // minute, against a table that is already pruned below.
+    //
+    // The board and not the whole pool, because this table is read by the replay
+    // and by a restart, and both draw the board and the round's field rather
+    // than the ranks below them.
+    const sample = this.sampleAt(at.getTime(), this.tokens.slice(0, BOARD_SIZE));
     try {
       await prisma.rankSample.createMany({
-        data: this.tokens.slice(0, BOARD_SIZE).map((t, i) => ({
+        data: [...sample.ranks].map(([symbol, rank]) => ({
           at,
-          symbol: t.symbol,
-          rank: i + 1,
-          volume: t.volume,
+          symbol,
+          rank,
+          volume: sample.vols.get(symbol) ?? 0,
         })),
         skipDuplicates: true,
       });
@@ -230,6 +290,9 @@ class Oracle {
   private remember(tokens: TrendingToken[]): void {
     const fresh: TokenMeta[] = [];
     for (const t of tokens) {
+      // Before the early-out, so a logo whose host failed is retried from here
+      // once its backoff has run — the store makes this a set lookup otherwise.
+      warmLogo(t.imageUrl);
       const known = this.meta.get(t.symbol);
       if (known && known.name === t.name && known.imageUrl === t.imageUrl) continue;
       const entry: TokenMeta = {
@@ -269,6 +332,9 @@ class Oracle {
           name: t.name,
           imageUrl: t.imageUrl,
         });
+        // Every coin ever raced, not just today's board: settled rounds and
+        // replays draw them too, and a logo is fetched once and kept.
+        warmLogo(t.imageUrl);
       }
     } catch {
       // Falls back to whatever the first poll reports.
@@ -350,7 +416,7 @@ class Oracle {
         // claiming the board was half a million hours old.
         this.asOf = newest.t;
         this.updatedAt = newest.t;
-        this.tokens = [...newest.ranks.entries()]
+        this.watched = [...newest.ranks.entries()]
           .sort(([, a], [, b]) => a - b)
           .map(([symbol]) => {
             const known = this.meta.get(symbol);
@@ -367,12 +433,24 @@ class Oracle {
               trades1h: 0,
               wallets1h: 0,
               priceChange1hPercent: 0,
+              // Everything in a stored sample was on the board or in the round's
+              // field when it was written, so it raced.
+              racing: true,
             };
           });
-        this.bySymbol = new Map(this.tokens.map((t) => [t.symbol, t]));
+        // The stored board can now carry a round entry that had already been
+        // relegated when the process died, sitting below the visible ten. Kept,
+        // because a lookup on it is exactly what the live rows need; ordered by
+        // the rank the sample recorded, so the board on top of it is the board
+        // that was there. Below the board this renumbers by position and can
+        // therefore read a place or two high — the first live poll replaces the
+        // lot, and `status` says `stale` until it does.
+        this.ranked = this.watched;
+        this.tokens = this.ranked.slice(0, POOL);
+        this.bySymbol = new Map(this.watched.map((t) => [t.symbol, t]));
         this.status = "stale";
         console.log(
-          `📈  no upstream yet — serving the last known board of ${this.tokens.length}, ` +
+          `📈  no upstream yet — serving the last known board of ${this.watched.length}, ` +
             `${Math.round((Date.now() - newest.t) / 60_000)} min old`
         );
       }
@@ -382,41 +460,75 @@ class Oracle {
   }
 
   async start(): Promise<void> {
-    if (this.timer) return;
-    // Before the key check: settled rounds are served from the database and
-    // still want their marks, even on a box with no upstream credentials.
+    if (this.running) return;
+    this.running = true;
     await this.hydrateMeta();
-    if (!hasKey()) {
-      this.status = "degraded";
+    await this.hydrate();
+    if (!hasMainnetRpc()) {
       console.warn(
         [
-          "⚠  BIRDEYE_DATA_SECRET is not set — the board will be EMPTY.",
-          "   Put it in server/.env. Note that only `bun` auto-loads .env;",
-          "   the npm scripts pass --env-file-if-exists so any runner works.",
+          "⚠  No mainnet RPC — the board's freshness is Jupiter's word for it alone.",
+          "   Point SOLANA_RPC_URL at Helius, or set CROWN_PRICE_RPC_URL, and the",
+          "   oracle checks Jupiter's price slots against the chain itself.",
         ].join("\n")
       );
-      return;
     }
-    await this.hydrate();
-    await this.refresh();
-    this.timer = setInterval(() => void this.refresh(), POLL_MS);
+    await this.tick();
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
+    this.running = false;
+    if (this.timer) clearTimeout(this.timer);
     this.timer = null;
   }
 
-  private async refresh(): Promise<void> {
-    if (this.inFlight) return; // a slow poll must not stack up behind itself
-    this.inFlight = true;
+  /**
+   * Whether the board is a current reading of the market — fit to open a round
+   * on, or to cut one against.
+   *
+   * Asked of the clock rather than of the last poll, so a poll loop that has
+   * stopped, or an upstream that has gone quiet, cannot leave this saying yes.
+   */
+  isLive(): boolean {
+    return this.status === "live" && Date.now() - this.updatedAt <= STALE_AFTER_MS;
+  }
+
+  /**
+   * One poll, then the next one scheduled for when it is worth making.
+   *
+   * A chain of timeouts rather than an interval, because the right gap is a
+   * property of each response — the upstream's cache says when it will next have
+   * something new — and because a chain cannot stack a slow poll behind itself.
+   */
+  private async tick(): Promise<void> {
+    const wait = await this.refresh();
+    if (this.running) this.timer = setTimeout(() => void this.tick(), wait);
+  }
+
+  /** Clamp a requested gap to the poll bounds. */
+  private gap(ms: number): number {
+    return Math.min(MAX_POLL_MS, Math.max(MIN_POLL_MS, ms));
+  }
+
+  /** Poll once. Resolves to how long to wait before the next poll. */
+  private async refresh(): Promise<number> {
     try {
-      const { tokens, asOf } = await fetchTrending(POOL);
+      const [{ tokens, watched, asOf, slot, freshInMs }, chainSlot] = await Promise.all([
+        fetchTrending(POOL, this.tracked),
+        // A cross-check, not a dependency: without it the board still runs, on
+        // Jupiter's word for how fresh it is.
+        hasMainnetRpc() ? mainnetSlot().catch(() => null) : Promise.resolve(null),
+      ]);
+      const received = Date.now();
+      this.failures = 0;
+      // The copy in hand is the upstream's current one until its cache expires;
+      // asking before then only returns it again.
+      const wait = this.gap(freshInMs == null ? DEFAULT_POLL_MS : freshInMs + EXPIRY_SLACK_MS);
       if (tokens.length) {
-        // Most polls land inside the upstream's recompute interval and return
-        // byte-identical numbers. Those still get a history sample — the chart
-        // needs a point per poll or its line is a handful of specks and an
-        // empty axis for the first minute after boot. What they must NOT do is
+        // A poll can still land inside the upstream's recompute interval — a
+        // cache that expired a moment before the origin produced the next
+        // reading — and return byte-identical numbers. Those still get a history
+        // sample, so the line always reaches "now". What they must NOT do is
         // advance `updatedAt` or emit flow events, or the UI would claim fresh
         // data and invent rank changes that never happened.
         // **A new measurement, not a new poll.**
@@ -429,15 +541,31 @@ class Oracle {
         const changed = asOf !== this.asOf;
         this.asOf = asOf;
 
-        this.tokens = tokens;
-        this.bySymbol = new Map(tokens.map((t) => [t.symbol, t]));
-        this.remember(tokens);
-        // Freshness is the upstream's timestamp against the clock, not whether
-        // a fetch succeeded. A response that arrives promptly and carries data
+        // The pool ranks; the wider list answers "what is this coin doing?".
+        // Keying the lookup on the pool meant a coin that left it had no price
+        // and no volume anywhere — reported as zero, which reads as a dead
+        // market rather than as the demotion the round is scored on, or as the
+        // liquidity reading that blinked.
+        this.watched = watched;
+        this.bySymbol = new Map(watched.map((t) => [t.symbol, t]));
+        this.rerank();
+        // Identities for the pool only. Everything wider is a coin no round has
+        // raced, and `meta` is never evicted — remembering the whole page would
+        // grow the table by the upstream's page size rather than by the game's.
+        this.remember(this.tokens);
+        // Freshness is the data's own time against the clock, not whether a
+        // fetch succeeded. A response that arrives promptly and carries data
         // computed five hours ago is a successful fetch of stale data, and
         // calling that "live" is how an empty chart became a mystery.
-        this.status = Date.now() - asOf > STALE_AFTER_MS ? "stale" : "live";
-        if (changed) this.updatedAt = asOf;
+        //
+        // The older of the two clocks, so a provider that stamps frozen numbers
+        // as new is caught by the slots, and one that is ahead of the chain
+        // somehow is held to its own stamp.
+        this.lagMs =
+          chainSlot != null && slot != null ? Math.max(0, chainSlot - slot) * SLOT_MS : null;
+        const describes = this.lagMs == null ? asOf : Math.min(asOf, received - this.lagMs);
+        if (changed) this.updatedAt = describes;
+        this.status = received - this.updatedAt > STALE_AFTER_MS ? "stale" : "live";
         this.record();
         // Both keyed on a new *measurement*. Persisting every poll wrote the
         // same numbers under a new timestamp and drew a chart of our own polling
@@ -448,30 +576,137 @@ class Oracle {
           this.emit();
         }
       }
+      return wait;
     } catch (err) {
-      this.status = "degraded";
+      this.failures++;
+      // One failed request does not make the numbers in hand any older. The
+      // board says it is degraded once they are too old to call live — which
+      // `isLive` works out from the clock regardless — rather than at the first
+      // blip, when nothing a player can see has changed.
+      if (Date.now() - this.updatedAt > STALE_AFTER_MS) this.status = "degraded";
       console.warn("⚠  oracle refresh:", err instanceof Error ? err.message : err);
-    } finally {
-      this.inFlight = false;
+      const asked = err instanceof UpstreamError ? err.retryInMs : undefined;
+      return Math.min(
+        MAX_BACKOFF_MS,
+        asked ?? MIN_POLL_MS * 2 ** Math.min(this.failures - 1, 10)
+      );
     }
   }
 
-  private rankMap(): Map<string, number> {
-    const m = new Map<string, number>();
-    this.tokens.forEach((t, i) => m.set(t.symbol, i + 1));
-    return m;
+  /**
+   * Follow these symbols until told otherwise — the live round's field.
+   *
+   * A round names ten coins and then runs for its length; where they sit on the
+   * board after that is the thing being bet on, not a reason to stop measuring
+   * them. Called from the one place that already answers "which round is live",
+   * so a restart, a chain tick and an API poll all re-assert the same field.
+   *
+   * An empty set is the honest state between rounds: nothing is owed a trail
+   * and the board is all there is.
+   */
+  track(symbols: Iterable<string>): void {
+    this.tracked = new Set(symbols);
+    // Now rather than at the next poll: who is racing depends on the field, and
+    // a round opening or closing changes the field.
+    this.rerank();
   }
 
-  /** Snapshot the ordering into history every poll. */
+  /**
+   * Who is racing, busiest first, and the pool cut from it.
+   *
+   * **Eligibility decides who enters a round, not who is scored in one.**
+   *
+   * The liquidity floor and the stablecoin rules pick the field when a round
+   * opens. Applying them again on every poll meant a field coin whose liquidity
+   * dipped under the floor — $240k against $250k, on a coin turning over $2.6m
+   * an hour and second on the board by volume — vanished from the ranking and
+   * stood at `BOARD_SIZE + 1`: last on the board, and scored there at the cut,
+   * while its row showed the volume of a coin near the top. A liquidity reading
+   * that blinks is not an outcome, and it must not decide one; it would also
+   * hand anyone who can pull a pool's liquidity at the cut a way to settle a
+   * LOWER. So the live round's field ranks by volume like everything else, for
+   * as long as the round lasts.
+   */
+  private rerank(): void {
+    this.ranked = this.watched.filter((t) => t.racing || this.tracked.has(t.symbol));
+    this.tokens = this.ranked.slice(0, POOL);
+  }
+
+  /**
+   * A coin's place among the racers, or null if it is not one of them just now —
+   * it may still be watched, and still have numbers. Ranks past the pool are
+   * real positions, not "off the board": the board is the top BOARD_SIZE of
+   * these, and a rank is a standing among coins that could take each other's
+   * place.
+   */
+  private rankOf(symbol: string): number | null {
+    const i = this.ranked.findIndex((t) => t.symbol === symbol);
+    return i < 0 ? null : i + 1;
+  }
+
+  /**
+   * Tracked coins a given set has already lost — the round's field, minus
+   * whatever is still in the board or pool being written.
+   *
+   * This is the set that used to fall silent: relegation removed a coin from
+   * every list the recorder looked at, so its trail ended mid-round and only
+   * resumed if it climbed back.
+   */
+  private strays(within: TrendingToken[]): TrendingToken[] {
+    if (!this.tracked.size) return [];
+    const have = new Set(within.map((t) => t.symbol));
+    const out: TrendingToken[] = [];
+    for (const symbol of this.tracked) {
+      if (have.has(symbol)) continue;
+      const token = this.bySymbol.get(symbol);
+      if (token) out.push(token);
+    }
+    return out.sort((a, b) => b.volume - a.volume);
+  }
+
+  /**
+   * One measurement, as a sample: everything in `base`, plus the round's field
+   * wherever it has got to.
+   *
+   * The second half is the whole point. A coin can be relegated out of the board
+   * and then out of the pool, and every list this recorder had to hand lost it
+   * at one of those two steps — so its trail ended mid-round, which is the one
+   * stretch of it anybody is looking at. The buffer and the sample table both
+   * take their membership from here, so they cannot disagree about who was in
+   * the race.
+   */
+  private sampleAt(t: number, base: TrendingToken[]): Sample {
+    const ranks = new Map<string, number>();
+    const vols = new Map<string, number>();
+    const add = (token: TrendingToken, rank: number) => {
+      ranks.set(token.symbol, rank);
+      vols.set(token.symbol, token.volume);
+    };
+    base.forEach((token, i) => add(token, i + 1));
+    for (const token of this.strays(base)) {
+      // Its real place among everything eligible. `BOARD_SIZE + 1` is what
+      // settlement scores a relegated coin at, and it is deliberately not used
+      // here: that is a rule about payout, while this is a measurement, and
+      // flattening every place below the board into one would have the chart
+      // claim a coin stopped moving the moment it dropped.
+      add(token, this.rankOf(token.symbol) ?? base.length + 1);
+    }
+    return { t, ranks, vols };
+  }
+
+  /**
+   * Snapshot the ordering into history every poll.
+   *
+   * Trimmed by age rather than by count: the gap between polls is set by the
+   * upstream now, so a count would hold a different stretch of time depending
+   * on how often it happened to publish.
+   */
   private record(): void {
-    const now = Date.now();
-    const ranks = this.rankMap();
-    const vols = new Map(this.tokens.map((t) => [t.symbol, t.volume]));
-    this.history.push({ t: now, ranks, vols });
-    if (this.history.length > HISTORY_POINTS) {
-      this.history.splice(0, this.history.length - HISTORY_POINTS);
-    }
-
+    this.history.push(this.sampleAt(Date.now(), this.tokens));
+    const since = Date.now() - HISTORY_MINUTES * 60_000;
+    let expired = 0;
+    while (expired < this.history.length && this.history[expired].t < since) expired++;
+    if (expired) this.history.splice(0, expired);
   }
 
   private rankAgo(symbol: string, agoMs: number): number | null {
@@ -618,9 +853,12 @@ class Oracle {
    * into every sample so the whole window agrees on it. Enough to ask the one
    * question worth asking of `rankHistory`: which coins does it draw.
    */
-  seedForTest(rows: { symbol: string; volume: number }[], samples = 3): void {
+  seedForTest(
+    rows: { symbol: string; volume: number; racing?: boolean }[],
+    samples = 3
+  ): void {
     const at = Date.now();
-    this.tokens = rows.map((r) => ({
+    this.watched = rows.map((r) => ({
       assetId: r.symbol,
       symbol: r.symbol,
       name: r.symbol,
@@ -633,15 +871,24 @@ class Oracle {
       trades1h: 0,
       wallets1h: 0,
       priceChange1hPercent: 0,
+      // Racing unless a case says otherwise, which is the ordinary market. The
+      // exception is worth being able to write down: a coin can stop qualifying
+      // for a poll or two — a liquidity reading that blinks — while trading the
+      // whole time, and that is a different state from being relegated.
+      racing: r.racing ?? true,
     }));
-    this.bySymbol = new Map(this.tokens.map((t) => [t.symbol, t]));
+    // The pool is the prefix of the racers; anything past it is watched, and so
+    // is anything that isn't racing at all.
+    this.rerank();
+    this.bySymbol = new Map(this.watched.map((t) => [t.symbol, t]));
     this.history.length = 0;
+    // Through `sampleAt`, so a seeded history has the same membership a polled
+    // one does — the pool, plus anything tracked that has fallen out of it.
+    // Written out by hand, it quietly sampled coins the real recorder never
+    // would, which is the wrong thing for a seam whose whole job is to stand in
+    // for a poll.
     for (let n = samples; n > 0; n--) {
-      this.history.push({
-        t: at - n * POLL_MS,
-        ranks: new Map(rows.map((r, i) => [r.symbol, i + 1])),
-        vols: new Map(rows.map((r) => [r.symbol, r.volume])),
-      });
+      this.history.push(this.sampleAt(at - n * DEFAULT_POLL_MS, this.tokens));
     }
   }
 }

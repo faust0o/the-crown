@@ -427,6 +427,10 @@ export async function cutAndReveal(opts: {
   if (now < opts.round.lockAt.getTime()) return "waiting";
 
   if (opts.round.status === "Open") {
+    // Never a cut from numbers that are not a current reading. Waiting costs a
+    // tick; writing a frozen or empty board settles real positions on a market
+    // that has moved, or scores every coin as relegated.
+    if (!opts.standings && !oracle.isLive()) return "waiting";
     const board = opts.standings ?? oracle.standings(BOARD_SIZE);
     const rankOf = new Map(board.map((s) => [s.symbol, s.rank]));
     const entries = await readBoard(opts.round.index, opts.round.entryCount);

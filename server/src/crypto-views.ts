@@ -7,9 +7,15 @@ type RoundWithEntries = Round & { entries: RoundEntry[] };
 /**
  * Shape a round for the API.
  *
- * `seed` is withheld until the round is SETTLED — publishing it earlier would
- * let anyone compute the cut instant in advance, which is the whole thing the
- * commitment exists to prevent.
+ * `seed` is withheld until the cut has been recorded — publishing it earlier
+ * would let anyone compute the cut instant in advance, which is the whole thing
+ * the commitment exists to prevent. Once `cutAt` exists that moment has passed
+ * and been written down, so the reveal proves what it is meant to prove.
+ *
+ * It used to wait for SETTLED, which tied the proof to the payout run: a round
+ * whose bets had not been paid yet published no seed and no cut time, so it
+ * could not be verified and the results panel would not show it. Those are two
+ * different jobs, and the slow one is not the one the history is about.
  */
 export function toRoundView(round: RoundWithEntries) {
   // `liveRank` only means anything while the round is still running. For a
@@ -26,8 +32,8 @@ export function toRoundView(round: RoundWithEntries) {
     endsAt: round.endsAt,
     status: round.status,
     commitHash: round.commitHash,
-    seed: round.status === "SETTLED" ? round.seed : null,
-    cutAt: round.status === "SETTLED" ? round.cutAt : null,
+    seed: round.cutAt ? round.seed : null,
+    cutAt: round.cutAt,
     cutWindowSeconds: round.cutWindowSeconds,
     crownSymbol: round.crownSymbol,
     entries: [...round.entries]

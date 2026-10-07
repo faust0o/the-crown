@@ -1,35 +1,8 @@
-// tokens.xyz client. The only network-facing part of the oracle.
-
-
-/**
- * Which volume field ranks the board.
- *
- * `/assets/trending` carries volume over 5m / 15m / 1h / 6h / 24h. 24h would
- * freeze the board — measured on real data, a 24h-volume ranking is unchanged
- * 90% of the time hour over hour, which would make a 10-minute round almost
- * entirely draws. 1h moves while still carrying enough signal that the ordering
- * isn't noise. Override with ORACLE_VOLUME_FIELD if you want a livelier or
- * calmer board.
- */
-export const VOLUME_FIELD = (process.env.ORACLE_VOLUME_FIELD ??
-  "volume1hUSD") as VolumeField;
-
-export type VolumeField =
-  | "volume5mUSD"
-  | "volume15mUSD"
-  | "volume1hUSD"
-  | "volume6hUSD"
-  | "volume24hUSD";
-
-/**
- * Optional category filter, empty by default.
- *
- * tokens.xyz's trending pool spans equity, crypto, commodity and etf, so
- * filtering to "crypto" silently dropped OPENAI, SPCX and the other tokenised
- * equities — which made our board disagree with the trending list on their own
- * site. Set TOKENS_XYZ_CATEGORY to narrow it again.
- */
-export const CATEGORY = process.env.TOKENS_XYZ_CATEGORY ?? "";
+// The shape of a trending row, whichever upstream it came from.
+//
+// Nothing here talks to the network — see the note at the foot of the file.
+// `jupiter.ts` produces these, and everything downstream of it is written
+// against them, which is what lets the source change without the game noticing.
 
 export interface TrendingToken {
   assetId: string;
@@ -37,7 +10,7 @@ export interface TrendingToken {
   name: string;
   imageUrl: string | null;
   price: number;
-  /** Volume over VOLUME_FIELD's window, in USD — the ranking metric. */
+  /** Volume over `jupiter.ts`'s `WINDOW`, in USD — the ranking metric. */
   volume: number;
   volume24h: number;
   liquidity: number;
@@ -45,10 +18,41 @@ export interface TrendingToken {
   trades1h: number;
   wallets1h: number;
   priceChange1hPercent: number;
+  /**
+   * May this coin be raced?
+   *
+   * A flag rather than a filter, and the distinction is the whole point. Whether
+   * a coin is allowed on the board is a question about the *race* — is its book
+   * deep enough that its rank can't simply be bought, is it a stablecoin that
+   * cannot move against the field. Whether we know what it is trading at is a
+   * question about *measurement*, and the answer to the second must not depend
+   * on the first: a round names ten coins, and one of them failing an
+   * eligibility test an hour later does not make it stop trading.
+   *
+   * Dropping the rows outright is what made it look like it had. A liquidity
+   * reading of $5 on a coin turning over $8.7m an hour — a glitch, or an LP
+   * pulled for a minute — erased it from the board and from every lookup at
+   * once, so its row reported "$0 · —" and the field looked one coin short.
+   */
+  racing: boolean;
 }
 
 export interface TrendingSnapshot {
+  /** The ranking universe: the busiest eligible tokens, board first. */
   tokens: TrendingToken[];
+  /**
+   * Every token the response carried, busiest first, one row per symbol —
+   * whether or not it may race. `tokens` is the racing ones, cut to the pool.
+   *
+   * Two ways a coin used to fall out of every list at once, and both of them
+   * happen to a coin in a live round. It can be relegated past the pool, which
+   * is the outcome the round is scored on; or it can fail an eligibility test
+   * for a poll or two, which is not an outcome at all. Either way the numbers
+   * went missing and the row read "$0" — a dead market, for a coin that was
+   * trading the whole time. The page is fetched several times deeper than the
+   * pool already, so keeping all of it costs nothing but the array.
+   */
+  watched: TrendingToken[];
   /**
    * When the data was measured, not when we asked for it.
    *
@@ -59,15 +63,30 @@ export interface TrendingSnapshot {
    * itself live, which is exactly what happened.
    */
   asOf: number;
+  /**
+   * The mainnet slot the pool's prices were read at, or null if the upstream
+   * did not say.
+   *
+   * A second clock, and the one that cannot be mislabelled: `asOf` is the
+   * upstream's word for when it computed, while a slot is a position on the
+   * chain that anyone can check against the chain.
+   */
+  slot: number | null;
+  /**
+   * How long until the upstream has a newer copy than this one, from its own
+   * cache headers — or null if it sent none. Asking before then returns this
+   * same measurement again.
+   */
+  freshInMs: number | null;
 }
 
 /**
- * The tokens.xyz client that used to live here is gone.
+ * Two upstreams have come and gone behind these types.
  *
- * It served a snapshot twenty hours stale while labelling it `"mode": "fresh"`,
- * on every endpoint and every parameter combination, and eventually regressed to
- * numbers older than ones it had already served — with their own site current
- * throughout. `birdeye.ts` reads the source they were reselling
- * (`scoringVersion: "birdeye-selected-fresh-v1"`); these types are all that
- * survives, because everything downstream is written against them.
+ * tokens.xyz served a snapshot twenty hours stale while labelling it
+ * `"mode": "fresh"`, with their own site current throughout. Birdeye, the source
+ * it was reselling, priced the board's one request in compute units against a
+ * monthly allowance that ran out. `jupiter.ts` is the current source; these
+ * types are what survives a change of source, because everything downstream is
+ * written against them.
  */
