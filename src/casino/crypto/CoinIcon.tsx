@@ -1,9 +1,17 @@
 import { useState } from "react";
 import { proxied } from "./proxied";
+import { cx } from "../ui";
 
 /**
- * Coin mark, served by tokens.xyz. Falls back to a lettered disc of exactly the
- * same size so an unknown or broken logo never reflows the row.
+ * Coin mark, served by tokens.xyz, set on a square tile.
+ *
+ * The tile is the foreground mixed a few percent into whatever it sits on, so
+ * it reads as a shade off the panel, the inset or the plate alike, in either
+ * theme. Most marks are discs with transparent corners; on the tile, every coin
+ * takes up the same square whatever shape its mark happens to be.
+ *
+ * Falls back to the ticker on the same tile, so an unknown or broken logo never
+ * reflows the row.
  */
 export function CoinIcon({
   ticker,
@@ -19,37 +27,43 @@ export function CoinIcon({
   // poll, so React hands one instance a succession of different coins, and a
   // boolean would leave the next one showing letters for a logo it never tried.
   const [failed, setFailed] = useState<string | null>(null);
+  // Enough of a margin that a disc doesn't touch the tile's edges, and no more:
+  // at 18px every pixel taken from the mark is one it can't spare.
+  const pad = Math.max(2, Math.round(size * 0.1));
+  const mark = size - pad * 2;
 
   // Logos live on arweave, IPFS gateways and raw.githubusercontent, which time
   // out often enough to matter — and the proxy answers that with a 502, so
   // without this the row held a blank box where the mark should be.
-  if (!url || failed === url) return <CoinFallback ticker={ticker} size={size} />;
-  return (
-    <img
-      src={url}
-      alt=""
-      aria-hidden="true"
-      width={size}
-      height={size}
-      loading="lazy"
-      onError={() => setFailed(url)}
-      className="shrink-0 rounded-[2px] object-contain"
-      style={{ width: size, height: size }}
-    />
-  );
-}
-
-function CoinFallback({ ticker, size }: { ticker: string; size: number }) {
+  const fallback = !url || failed === url;
   return (
     <span
       aria-hidden="true"
-      // A blank disc cut into the panel, with the ticker stamped in it. The
-      // fallback has to hold the same square as the logo it stands in for, or a
-      // broken image reflows the row it sits in.
-      className="mat-inset mat-engrave grid shrink-0 place-items-center rounded-full font-semibold text-secondary"
-      style={{ width: size, height: size, fontSize: size * 0.34 }}
+      className={cx(
+        "grid shrink-0 place-items-center bg-foreground/6",
+        fallback && "mat-engrave font-semibold text-secondary"
+      )}
+      style={{
+        width: size,
+        height: size,
+        borderRadius: Math.max(2, Math.round(size / 10)),
+        fontSize: fallback ? size * 0.34 : undefined,
+      }}
     >
-      {ticker.slice(0, 3)}
+      {fallback ? (
+        ticker.slice(0, 3)
+      ) : (
+        <img
+          src={url}
+          alt=""
+          width={mark}
+          height={mark}
+          loading="lazy"
+          onError={() => setFailed(url)}
+          className="object-contain"
+          style={{ width: mark, height: mark }}
+        />
+      )}
     </span>
   );
 }
