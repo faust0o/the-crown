@@ -9,7 +9,6 @@ import {
   Segmented,
   ThemeToggle,
 } from "../ui";
-import { BetFlow } from "./BetFlow";
 import { BetPanel } from "./BetPanel";
 import { BetResult } from "./BetResult";
 import { FlowFeed } from "./FlowFeed";
@@ -528,13 +527,14 @@ function CrownInner() {
                   selling={selling}
                 />
               )}
-              <BetFlow standing={activeStanding} entry={activeEntry} />
-              <FlowFeed
-                events={roundFlow}
-                status={error ? "error" : status?.status}
-                updatedAt={status?.updatedAt}
-              />
-              <Orders onSelect={onSelect} />
+              {/*
+                Under the ticket, but only once the player has traded this
+                round. Before that the room's orders are someone else's game,
+                and the empty feed took the spot right under the ticket from
+                panels that had something to say.
+              */}
+              {roundBets.length > 0 && <Orders onSelect={onSelect} />}
+              <FlowFeed events={roundFlow} status={error ? "error" : status?.status} />
             </div>
           </div>
         )}

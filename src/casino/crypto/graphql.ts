@@ -70,15 +70,6 @@ export interface Entry {
   lines: Line[];
 }
 
-/** One side of a coin's book, aggregated from the tape that sets its price. */
-export interface BookLevel {
-  direction: Direction;
-  /** Last traded price per share, in cents. */
-  cents: number;
-  /** Shares that changed hands on this line inside the server's book window. */
-  size: number;
-}
-
 /**
  * A finished round: what it was, and how it ended.
  *
@@ -271,25 +262,6 @@ export const BOARD: TypedDocumentNode<
     }
     cryptoRound { ${ROUND_FIELDS} }
     myCryptoBets { ${BET_FIELDS} }
-  }
-`;
-
-/**
- * Depth for one coin. It can't ride along on BOARD — that query takes no symbol
- * and the book is per-coin — so it is its own round trip, polled at the same
- * cadence so the bars and the board's price chips are never more than a tick
- * apart.
- */
-export const CRYPTO_BOOK: TypedDocumentNode<
-  { cryptoBook: BookLevel[] },
-  { symbol: string }
-> = gql`
-  query CryptoBook($symbol: String!) {
-    cryptoBook(symbol: $symbol) {
-      direction
-      cents
-      size
-    }
   }
 `;
 

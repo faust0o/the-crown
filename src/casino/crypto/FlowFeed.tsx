@@ -1,4 +1,3 @@
-import { useClock } from "../hooks/useClock";
 import { CoinIcon } from "./CoinIcon";
 import { formatCompact } from "../format";
 import type { FlowEvent } from "./graphql";
@@ -14,74 +13,68 @@ import { Empty, Section } from "../ui";
 export function FlowFeed({
   events,
   status,
-  updatedAt,
   note,
 }: {
   events: FlowEvent[];
   status?: string;
-  /** When the upstream last published new numbers. */
-  updatedAt?: number;
-  /** Replaces the sync age — for feeds that aren't tracking the live board. */
+  /**
+   * Captions the feed, for one that isn't the live board's — the replay's.
+   *
+   * The live feed has no caption: it sits under the ticket, and what it is is
+   * obvious from a single row of it. A replay's feed sits among other captioned
+   * sections, and without one of its own it read as the tail of the section
+   * above it.
+   */
   note?: string;
 }) {
-  useClock(); // tick the sync age once a second
-  const age =
-    updatedAt && updatedAt > 0
-      ? Math.max(0, Math.round((Date.now() - updatedAt) / 1000))
-      : null;
-  const sync =
-    note ??
-    (status === "error" || status === "degraded"
-      ? "oracle down"
-      : age == null
-        ? "syncing…"
-        : `synced ${age < 90 ? `${age}s` : `${Math.round(age / 60)}m`} ago`);
-
-  return (
-    <Section
-      title="Flow"
-      aside={
-        /* Fixed box and tabular figures — this rewrites every second, and
-           letting it size itself shifted the column heading around. */
-        <span
-          className="block w-[96px] whitespace-nowrap text-right tabular-nums"
-          title={note ? undefined : "tokens.xyz republishes about once a minute"}
-        >
-          {sync}
-        </span>
-      }
-    >
-      <ul className="m-0 max-h-[460px] min-w-0 list-none overflow-y-auto overflow-x-hidden p-0">
-        {events.map((e) => {
-          const up = e.from == null || e.to < e.from;
-          return (
-            <li
-              key={`${e.symbol}-${e.at}-${e.to}`}
-              className="casino-tape-in grid w-full items-center gap-2 overflow-hidden rounded border-b border-[var(--bevel-lo)] px-2 py-1.5 last:border-b-0"
-              style={{ gridTemplateColumns: "18px minmax(0,auto) minmax(0,1fr) minmax(0,auto)" }}
+  const down = status === "error" || status === "degraded";
+  const list = (
+    <ul className="m-0 max-h-[460px] min-w-0 list-none overflow-y-auto overflow-x-hidden p-0">
+      {events.map((e) => {
+        const up = e.from == null || e.to < e.from;
+        return (
+          <li
+            key={`${e.symbol}-${e.at}-${e.to}`}
+            className="casino-tape-in grid w-full items-center gap-2 overflow-hidden rounded border-b border-[var(--bevel-lo)] px-2 py-1.5 last:border-b-0"
+            style={{ gridTemplateColumns: "18px minmax(0,auto) minmax(0,1fr) minmax(0,auto)" }}
+          >
+            <CoinIcon ticker={e.ticker} src={e.imageUrl} size={18} />
+            <span className="min-w-0 truncate font-mono text-xs font-semibold text-foreground">
+              {e.ticker}
+            </span>
+            <span
+              className="min-w-0 truncate font-mono text-[11px] tabular-nums"
+              style={{ color: up ? "var(--up)" : "var(--down)" }}
             >
-              <CoinIcon ticker={e.ticker} src={e.imageUrl} size={18} />
-              <span className="min-w-0 truncate font-mono text-xs font-semibold text-foreground">
-                {e.ticker}
-              </span>
-              <span
-                className="min-w-0 truncate font-mono text-[11px] tabular-nums"
-                style={{ color: up ? "var(--up)" : "var(--down)" }}
-              >
-                {e.from == null ? "new" : `${e.from} → ${e.to}`} {up ? "▲" : "▼"}
-              </span>
-              <span className="min-w-0 truncate text-right font-mono text-xs tabular-nums text-muted">
-                ${formatCompact(e.quoteVolume)}
-              </span>
-            </li>
-          );
-        })}
-        {!events.length && (
-          <li>
-            <Empty>watching for moves…</Empty>
+              {e.from == null ? "new" : `${e.from} → ${e.to}`} {up ? "▲" : "▼"}
+            </span>
+            <span className="min-w-0 truncate text-right font-mono text-xs tabular-nums text-muted">
+              ${formatCompact(e.quoteVolume)}
+            </span>
           </li>
-        )}
-      </ul>
-    </Section>
+        );
+      })}
+      {!events.length && (
+        <li>
+          <Empty>watching for moves…</Empty>
+        </li>
+      )}
+    </ul>
+  );
+
+  if (note) {
+    return (
+      <Section title="Flow" aside={note}>
+        {list}
+      </Section>
+    );
+  }
+  return (
+    <section aria-label="Flow" className="mb-4 flex min-w-0 flex-col">
+      {/* The one thing the old caption said that still needs saying — and only
+          when it is true. How long ago a healthy feed synced is noise. */}
+      {down && <p className="m-0 mb-1.5 text-[11px] text-down">oracle down — the board may be stale</p>}
+      {list}
+    </section>
   );
 }
