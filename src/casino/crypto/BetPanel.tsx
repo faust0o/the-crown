@@ -378,33 +378,35 @@ export function BetPanel({
       </div>
 
       {/* What the ticket is worth on the other side of the key. Buying, that is
-          the payout if the line lands; selling, it is the cash, now. */}
-      <div className="mt-3 flex items-end justify-between gap-3 border-t border-hairline pt-2.5">
-        <span className="min-w-0">
-          <Caption>{isBuy ? "to win" : "you receive"}</Caption>
-          <span className="block font-mono text-[11px] tabular-nums text-muted">
-            {isBuy
-              ? line?.available
-                ? `${line.cents}¢ · ${line.multiplier.toFixed(2)}x`
-                : "no line"
-              : sale
-                ? `${sale.cents}¢ · ${formatSigned(sale.payout - sale.sold)}`
-                : "no bid"}
+          the payout if the line lands; selling, it is the cash, now. With no
+          line to buy there is no payout to quote, so the row is left out. */}
+      {isBuy ? (
+        line?.available && (
+          <div className="mt-3 flex items-end justify-between gap-3 border-t border-hairline pt-2.5">
+            <span className="min-w-0">
+              <Caption>to win</Caption>
+              <span className="block font-mono text-[11px] tabular-nums text-muted">
+                {`${line.cents}¢ · ${line.multiplier.toFixed(2)}x`}
+              </span>
+            </span>
+            <span className="shrink-0 font-mono text-xl tabular-nums" style={{ color: "var(--up)" }}>
+              {formatCredits(amount * line.multiplier)}
+            </span>
+          </div>
+        )
+      ) : (
+        <div className="mt-3 flex items-end justify-between gap-3 border-t border-hairline pt-2.5">
+          <span className="min-w-0">
+            <Caption>you receive</Caption>
+            <span className="block font-mono text-[11px] tabular-nums text-muted">
+              {sale ? `${sale.cents}¢ · ${formatSigned(sale.payout - sale.sold)}` : "no bid"}
+            </span>
           </span>
-        </span>
-        <span
-          className="shrink-0 font-mono text-xl tabular-nums"
-          style={{ color: isBuy ? "var(--up)" : "var(--sell-ink)" }}
-        >
-          {isBuy
-            ? line?.available
-              ? formatCredits(amount * line.multiplier)
-              : "—"
-            : sale
-              ? formatCredits(sale.payout)
-              : "—"}
-        </span>
-      </div>
+          <span className="shrink-0 font-mono text-xl tabular-nums" style={{ color: "var(--sell-ink)" }}>
+            {sale ? formatCredits(sale.payout) : "—"}
+          </span>
+        </div>
+      )}
 
       {/* The one lit control on the page: the thing the page is for. Blue buying
           and amber selling — the same lamp, and which colour it is is the whole
