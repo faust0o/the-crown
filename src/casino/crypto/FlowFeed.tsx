@@ -70,7 +70,9 @@ export function FlowFeed({
     );
   }
   return (
-    <section aria-label="Flow" className="mb-4 flex min-w-0 flex-col">
+    // `min-h-0` lets the list give up height when the ticket column is pinned
+    // to the viewport — it scrolls already, so it is the part that can.
+    <section aria-label="Flow" className="mb-4 flex min-h-0 min-w-0 flex-col">
       {/* The one thing the old caption said that still needs saying — and only
           when it is true. How long ago a healthy feed synced is noise. */}
       {down && <p className="m-0 mb-1.5 text-[11px] text-down">oracle down — the board may be stale</p>}

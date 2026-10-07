@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@apollo/client/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { SessionProvider, useSession } from "../session/SessionProvider";
 import {
   Button,
@@ -77,6 +77,24 @@ function useFavicon(href: string, type: string) {
 }
 
 /**
+ * Publish the sticky header's height as `--header-h` on the page, so the ticket
+ * column can stick flush under it. Measured rather than assumed: the header
+ * wraps on a narrow screen and changes with what the account side shows.
+ */
+function useHeaderHeight(header: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const el = header.current;
+    const page = el?.parentElement;
+    if (!el || !page) return;
+    const observer = new ResizeObserver(() =>
+      page.style.setProperty("--header-h", `${el.offsetHeight}px`)
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [header]);
+}
+
+/**
  * The crown: the ten most-traded trending assets, competing on volume.
  *
  * One page. The board is the market, the flow feed lists every rank change this
@@ -93,6 +111,8 @@ export default function CryptoPage() {
 function CrownInner() {
   useTitle("The Crown · Utopian Contributors");
   useFavicon("/crown-icon.svg", "image/svg+xml");
+  const headerRef = useRef<HTMLElement>(null);
+  useHeaderHeight(headerRef);
   const { user } = useSession();
   // The same door the header opens, reachable from the ticket — see `onPlace`.
   const { promptSignIn, picker } = useSignInPrompt();
@@ -420,7 +440,10 @@ function CrownInner() {
         place in the app it appears — it is what separates the instrument from
         the room, and repeating it inside the panels would be trim on trim.
       */}
-      <header className="mat-panel-flush mat-grain sticky top-0 z-30 rounded-none border-x-0 border-t-0">
+      <header
+        ref={headerRef}
+        className="mat-panel-flush mat-grain sticky top-0 z-30 rounded-none border-x-0 border-t-0"
+      >
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 px-6 py-3">
           <a href="/" className="flex items-center gap-2.5 no-underline">
             <img
@@ -546,7 +569,13 @@ function CrownInner() {
                 )}
               </div>
 
-              <div className="flex min-w-0 flex-col gap-5">
+              {/*
+                Pinned under the header while the board scrolls past, so the
+                ticket is in reach of whichever row is picked. Bounded to the
+                viewport: the ticket keeps its height and the feeds under it
+                give up theirs, scrolling inside what is left.
+              */}
+              <div className="flex min-w-0 flex-col gap-5 lg:sticky lg:top-[calc(var(--header-h,0px)+1.25rem)] lg:max-h-[calc(100dvh-var(--header-h,0px)-1.25rem)] lg:self-start">
                 {/*
                   Always up for a visitor; withheld from an account with nothing
                   to spend — see `charged`.

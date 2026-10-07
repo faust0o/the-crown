@@ -95,7 +95,9 @@ export function Orders({ onSelect }: { onSelect?: (symbol: string) => void }) {
   const rows = data?.orders ?? [];
 
   return (
-    <Section title="Orders">
+    // Shrinkable, like the flow feed under it, for when the ticket column is
+    // pinned to the viewport and the list has to scroll in less room.
+    <Section title="Orders" className="min-h-0" bodyClassName="flex min-h-0 flex-col">
       <ul className="m-0 max-h-[360px] min-w-0 list-none overflow-y-auto overflow-x-hidden p-0">
         {rows.map((o) => {
           const tone = TONE[o.direction];
