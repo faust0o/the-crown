@@ -254,18 +254,30 @@ function CrownInner() {
   // a query fetched once at login meant the header never moved.
   const credits = data?.me?.credits ?? user?.credits ?? null;
 
-  // Surface each bet's outcome exactly once, as it flips out of OPEN.
-  const [result, setResult] = useState<(typeof allBets)[number] | null>(null);
+  // Surface each settlement exactly once, as its bets flip out of OPEN — all of
+  // them in one receipt, not the first and silence for the rest. Only a win or
+  // a loss: a sale already has its own receipt on the ticket, and showing one
+  // here as well called a profitable exit a lost bet.
+  const [result, setResult] = useState<typeof allBets | null>(null);
   const seen = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     const queue: typeof allBets = [];
     for (const b of allBets) {
       const was = seen.current.get(b.id);
-      if (was && was === "OPEN" && b.status !== "OPEN") queue.push(b);
+      if (was === "OPEN" && (b.status === "WON" || b.status === "LOST")) queue.push(b);
       seen.current.set(b.id, b.status);
     }
-    if (queue.length) setResult((cur) => cur ?? queue[0]);
+    if (queue.length) setResult((cur) => cur ?? queue);
   }, [allBets]);
+  // A position can resolve on a coin that has since fallen off the board, and
+  // the round it was taken on still knows its mark.
+  const imageUrl = useCallback(
+    (symbol: string) =>
+      standings.find((s) => s.symbol === symbol)?.imageUrl ??
+      entries.get(symbol)?.imageUrl ??
+      null,
+    [standings, entries]
+  );
   const roundBets = useMemo(
     () => allBets.filter((b) => b.roundId === round?.id),
     [allBets, round?.id]
@@ -544,17 +556,7 @@ function CrownInner() {
         }}
         bets={allBets}
       />
-      <BetResult
-        bet={result}
-        imageUrl={
-          standings.find((s) => s.symbol === result?.symbol)?.imageUrl ??
-          // A position can resolve on a coin that has since fallen off the
-          // board, and the round it was taken on still knows its mark.
-          (result ? entries.get(result.symbol)?.imageUrl : null) ??
-          null
-        }
-        onDismiss={() => setResult(null)}
-      />
+      <BetResult bets={result} imageUrl={imageUrl} onDismiss={() => setResult(null)} />
       <HowItWorks open={howOpen} onClose={() => setHowOpen(false)} />
       {picker}
 

@@ -778,7 +778,7 @@
   88%, 100% { transform: translateX(var(--marquee-shift, 0)); }
 }
 
-/* Bet result: the card lands, the coin pops, rays sweep out behind a win. */
+/* Bet result: the card lands, the coins pop. Confetti.tsx throws the paper. */
 @keyframes casino-result-in {
   from { opacity: 0; transform: translateY(14px) scale(0.96); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
@@ -794,14 +794,6 @@
 .casino-result-pop {
   animation: casino-result-pop 520ms cubic-bezier(0.22, 1, 0.36, 1) 80ms both;
 }
-@keyframes casino-ray {
-  0%   { opacity: 0; transform: rotate(var(--r, 0deg)) scaleY(0.2); }
-  35%  { opacity: 0.9; }
-  100% { opacity: 0; transform: rotate(var(--r, 0deg)) scaleY(1); }
-}
-.casino-ray {
-  animation: casino-ray 900ms ease-out both;
-}
 
 @media (prefers-reduced-motion: reduce) {
   .casino-animate-in,
@@ -813,7 +805,6 @@
   .casino-tape-in,
   .casino-result-in,
   .casino-result-pop,
-  .casino-ray,
   [style*="casino-marquee-text"] {
     animation: none;
   }
