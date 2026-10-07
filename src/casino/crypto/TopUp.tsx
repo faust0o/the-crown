@@ -4,9 +4,10 @@ import { Transaction } from "@solana/web3.js";
 
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useCrownWallet } from "../chain/wallet";
-import { WalletButton } from "./WalletButton";
+import { ConnectWalletButton } from "./WalletButton";
 import { confirmCreditPurchase, prepareCreditPurchase } from "../chain/setup";
 import { formatCredits } from "../format";
+import { Button, Dialog, Input, Label, Readout, Section } from "../ui";
 
 /**
  * Buying credits with SOL.
@@ -39,9 +40,11 @@ export function TopUpCard({ credits }: { credits: number | null }) {
 
   return (
     <>
-      <div className="flex flex-col gap-3 rounded-lg border border-hairline bg-surface p-4 sm:flex-row sm:items-center sm:justify-between">
+      <Section title="Top up" bodyClassName="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <div className="text-sm font-medium text-foreground">Top up your balance</div>
+          <div className="text-sm font-medium text-foreground">
+            Swap SOL for credits
+          </div>
           <div className="mt-0.5 text-xs text-muted">
             {!address
               ? "Connect a wallet to swap SOL for credits."
@@ -56,19 +59,19 @@ export function TopUpCard({ credits }: { credits: number | null }) {
           the one control for putting money in was invisible to exactly the
           person who had none — and visible only after a flow whose whole purpose
           was to reach it.
+
+          Metal rather than the lit glass: it stands in the same slot as the
+          wallet control it replaces, so a different material here read as a
+          different *kind* of control rather than as emphasis.
         */}
         {address ? (
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            className="shrink-0 rounded-md bg-accent px-4 py-2 text-sm font-medium text-on-accent transition-opacity hover:opacity-90"
-          >
+          <Button size="sm" onClick={() => setOpen(true)}>
             Add credits
-          </button>
+          </Button>
         ) : (
-          <WalletButton />
+          <ConnectWalletButton />
         )}
-      </div>
+      </Section>
 
       {open && (
         <TopUpDialog onClose={() => setOpen(false)} solBalance={sol} />
@@ -87,6 +90,10 @@ function TopUpDialog({
   const { publicKey, sendTransaction } = useWallet();
   const { connection } = useConnection();
   const { refresh } = useCrownWallet();
+
+  // Base58 rather than the PublicKey, because it is what the quote is keyed on
+  // below and the adapter does not promise a stable object identity.
+  const owner = publicKey?.toBase58() ?? null;
 
   const [sol, setSol] = useState("0.25");
   const [quote, setQuote] = useState<{ credits: number; solPriceUsd: number } | null>(null);
@@ -110,14 +117,14 @@ function TopUpDialog({
    * a number they were still in the middle of writing.
    */
   useEffect(() => {
-    if (lamports == null) {
+    if (lamports == null || owner == null) {
       setQuote(null);
       return;
     }
     let cancelled = false;
     setQuoting(true);
     const timer = setTimeout(() => {
-      prepareCreditPurchase(lamports.toString())
+      prepareCreditPurchase(lamports.toString(), owner)
         .then((q) => {
           if (cancelled) return;
           setQuote({ credits: q.credits, solPriceUsd: q.solPriceUsd });
@@ -134,10 +141,10 @@ function TopUpDialog({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [lamports]);
+  }, [lamports, owner]);
 
   const buy = useCallback(async () => {
-    if (!publicKey || lamports == null) return;
+    if (owner == null || lamports == null) return;
     setBusy(true);
     setError(null);
     try {
@@ -145,7 +152,7 @@ function TopUpDialog({
       // one: that quote is up to a few seconds old, and its blockhash ages out.
       // The player sees the same figure either way — the rate is cached for a
       // minute server-side — but the transaction is fresh.
-      const prepared = await prepareCreditPurchase(lamports.toString());
+      const prepared = await prepareCreditPurchase(lamports.toString(), owner);
       const tx = Transaction.from(
         Uint8Array.from(atob(prepared.transaction), (c) => c.charCodeAt(0))
       );
@@ -173,101 +180,81 @@ function TopUpDialog({
     } finally {
       setBusy(false);
     }
-  }, [connection, lamports, onClose, publicKey, refresh, sendTransaction]);
+  }, [connection, lamports, onClose, owner, refresh, sendTransaction]);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Add credits"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-sm rounded-lg border border-hairline bg-surface p-5"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="m-0 text-sm font-medium text-foreground">Add credits</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="text-muted transition-colors hover:text-foreground"
-          >
-            ✕
-          </button>
-        </div>
-
-        <label className="block text-[10px] uppercase tracking-wider text-muted" htmlFor="topup-sol">
-          You pay
-        </label>
-        <div className="mt-1 flex items-center gap-2">
-          <input
-            id="topup-sol"
-            type="number"
-            min="0"
-            step="0.01"
-            value={sol}
-            onChange={(e) => setSol(e.target.value)}
-            className="min-w-0 flex-1 rounded border border-hairline bg-inset px-2 py-1.5 font-mono text-sm tabular-nums text-foreground"
-          />
-          <span className="shrink-0 font-mono text-sm text-muted">SOL</span>
-        </div>
-
-        <div className="mt-2 flex gap-1.5">
-          {PRESETS.map((p) => (
-            <button
-              key={p}
-              type="button"
-              onClick={() => setSol(String(p))}
-              className="rounded border border-hairline px-2 py-0.5 font-mono text-[11px] text-secondary transition-colors hover:text-foreground"
-            >
-              {p}
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-4 rounded border border-hairline bg-inset px-3 py-2.5">
-          <div className="text-[10px] uppercase tracking-wider text-muted">You receive</div>
-          <div className="font-mono text-xl tabular-nums text-foreground">
-            {quoting ? "…" : quote ? formatCredits(quote.credits) : "—"}
-          </div>
-          {quote && (
-            <div className="mt-0.5 font-mono text-[11px] text-muted">
-              at ${quote.solPriceUsd.toFixed(2)} / SOL
-            </div>
-          )}
-        </div>
-
-        {solBalance != null && (
-          <div className="mt-2 font-mono text-[11px] text-muted">
-            wallet holds {solBalance.toFixed(4)} SOL
-          </div>
-        )}
-
-        {tooMuch && (
-          <div className="mt-2 text-xs text-down">That is more SOL than the wallet holds.</div>
-        )}
-        {error && <div className="mt-2 text-xs text-down">{error}</div>}
-
-        <button
-          type="button"
-          disabled={busy || quoting || !quote || tooMuch || lamports == null}
-          onClick={() => void buy()}
-          className="mt-4 w-full rounded-md bg-accent px-4 py-2 text-sm font-medium text-on-accent transition-opacity hover:opacity-90 disabled:opacity-40"
-        >
-          {busy ? "Confirming…" : quote ? `Buy ${formatCredits(quote.credits)}` : "Enter an amount"}
-        </button>
-
-        <p className="mt-3 mb-0 text-[11px] leading-relaxed text-muted">
+    <Dialog
+      open
+      onClose={onClose}
+      title="Add credits"
+      footer={
+        <p className="m-0 text-[11px] leading-relaxed text-muted">
           One transfer, signed by your wallet: the SOL goes to the house, and the
           credits arrive once the server has read that payment off the chain. You
           pay the network fee. The payment is claimed by its signature, so it can
           only ever credit once — and a confirmation that goes astray on the way
           back still credits you when you return.
         </p>
+      }
+    >
+      <Label htmlFor="topup-sol">You pay</Label>
+      <div className="mt-1 flex items-center gap-2">
+        <Input
+          id="topup-sol"
+          type="number"
+          min="0"
+          step="0.01"
+          value={sol}
+          onChange={(e) => setSol(e.target.value)}
+          className="min-w-0 flex-1 py-1.5 font-mono tabular-nums"
+        />
+        <span className="shrink-0 font-mono text-sm text-muted">SOL</span>
       </div>
-    </div>
+
+      <div className="mt-2 flex gap-1.5">
+        {PRESETS.map((p) => (
+          <Button
+            key={p}
+            size="xs"
+            onClick={() => setSol(String(p))}
+            className="font-mono tabular-nums"
+          >
+            {p}
+          </Button>
+        ))}
+      </div>
+
+      <Readout
+        className="mt-4"
+        inset
+        size="lg"
+        label="You receive"
+        value={quoting ? "…" : quote ? formatCredits(quote.credits) : "—"}
+        hint={quote ? `at $${quote.solPriceUsd.toFixed(2)} / SOL` : undefined}
+      />
+
+      {solBalance != null && (
+        <div className="mt-2 font-mono text-[11px] text-muted">
+          wallet holds {solBalance.toFixed(4)} SOL
+        </div>
+      )}
+
+      {tooMuch && (
+        <div className="mt-2 text-xs text-down">That is more SOL than the wallet holds.</div>
+      )}
+      {error && <div className="mt-2 text-xs text-down">{error}</div>}
+
+      <Button
+        variant="glass"
+        side="buy"
+        size="lg"
+        block
+        className="mt-4"
+        disabled={busy || quoting || !quote || tooMuch || lamports == null}
+        onClick={() => void buy()}
+      >
+        {busy ? "Confirming…" : quote ? `Buy ${formatCredits(quote.credits)}` : "Enter an amount"}
+      </Button>
+    </Dialog>
   );
 }

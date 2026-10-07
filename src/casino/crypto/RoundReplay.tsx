@@ -5,14 +5,15 @@ import { CoinIcon } from "./CoinIcon";
 import { FlowFeed } from "./FlowFeed";
 import { useRoundVerification } from "./verify";
 import { VolumeChart } from "./VolumeChart";
+import { Button, Empty, Section, Tag } from "../ui";
 import {
   ROUND_REPLAY,
   type CryptoBet,
   type Direction,
-  type Entry,
+  type ResultEntry,
   type FlowEvent,
   type RankPoint,
-  type Round,
+  type RoundResult,
   type Standing,
 } from "./graphql";
 
@@ -103,7 +104,7 @@ export function RoundReplay({
   justEnded = false,
   onExit,
 }: {
-  round: Round;
+  round: RoundResult;
   /** Live board. Only a backstop now that the round carries its own logos. */
   standings: Standing[];
   /** The round ended under the player, rather than being picked off the list. */
@@ -195,9 +196,11 @@ export function RoundReplay({
           {chartHistory.length ? (
             <VolumeChart history={chartHistory} standings={asStandings} window="round" replay />
           ) : (
-            <div className="rounded-lg border border-hairline bg-surface p-8 text-center text-sm text-muted">
-              {loading ? "loading the round…" : "No samples were recorded for this round."}
-            </div>
+            <Section title="Volume race">
+              <Empty>
+                {loading ? "loading the round…" : "No samples were recorded for this round."}
+              </Empty>
+            </Section>
           )}
           <FinalBoard entries={finished} meta={meta} cutVolume={cutVolume} />
         </div>
@@ -217,15 +220,13 @@ function ReplayBar({
   justEnded,
   onExit,
 }: {
-  round: Round;
+  round: RoundResult;
   justEnded: boolean;
   onExit: () => void;
 }) {
   return (
-    <div className="casino-animate-in flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-hairline bg-inset px-4 py-2.5">
-      <span className="shrink-0 rounded border border-hairline px-1.5 py-px text-[10px] uppercase tracking-wider text-gold">
-        {justEnded ? "round over" : "replay"}
-      </span>
+    <div className="casino-animate-in flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-hairline pb-3">
+      <Tag tone="gold">{justEnded ? "round over" : "replay"}</Tag>
       <span className="font-mono text-sm tabular-nums text-foreground">
         {hhmm(round.startsAt)} – {hhmm(round.endsAt)}
       </span>
@@ -234,13 +235,9 @@ function ReplayBar({
           ? "That round just settled — here is how it finished. The next one is already running."
           : "This round is over — the board below is where it finished, and nothing on it can be backed."}
       </span>
-      <button
-        type="button"
-        onClick={onExit}
-        className="ml-auto shrink-0 rounded-md border border-hairline px-2.5 py-1 text-xs text-secondary transition-colors hover:text-foreground"
-      >
+      <Button size="sm" onClick={onExit} className="ml-auto">
         {justEnded ? "Go to the new round" : "Back to the live round"}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -257,25 +254,21 @@ function FinalBoard({
   meta,
   cutVolume,
 }: {
-  entries: Entry[];
+  entries: ResultEntry[];
   meta: Map<string, Meta>;
   cutVolume: Map<string, number>;
 }) {
   const total = entries.reduce((n, e) => n + (cutVolume.get(e.symbol) ?? 0), 0);
 
   return (
-    <div className="min-w-0 overflow-hidden rounded-lg border border-hairline bg-surface">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-hairline px-4 py-2.5">
-        <h2 className="text-sm font-semibold text-foreground">
-          The Field at the cut
-          <span className="ml-2 font-mono text-xs font-normal tabular-nums text-secondary">
-            ${formatCompact(total)}
-          </span>
-        </h2>
-        <span className="shrink-0 text-[11px] uppercase tracking-wider text-muted">
-          open → cut
+    <Section
+      title="The Field at the cut"
+      aside={
+        <span className="font-mono tabular-nums">
+          ${formatCompact(total)} · open → cut
         </span>
-      </div>
+      }
+    >
       <ol className="m-0 list-none p-0">
         {entries.map((e) => {
           const outcome = outcomeOf(e.startRank, e.cutRank);
@@ -287,7 +280,7 @@ function FinalBoard({
           return (
             <li
               key={e.symbol}
-              className="grid items-center gap-3 border-b border-hairline/60 px-4 py-2.5 last:border-b-0"
+              className="grid items-center gap-3 border-b border-[var(--bevel-lo)] px-4 py-2.5 last:border-b-0"
               style={{ gridTemplateColumns: "24px 12px 28px minmax(0,1fr) 76px" }}
             >
               <span className="grid place-items-center font-mono text-lg tabular-nums leading-none text-muted">
@@ -338,7 +331,7 @@ function FinalBoard({
           );
         })}
       </ol>
-    </div>
+    </Section>
   );
 }
 
@@ -349,7 +342,7 @@ function Resolution({
   meta,
   cutVolume,
 }: {
-  round: Round;
+  round: RoundResult;
   bets: CryptoBet[];
   meta: Map<string, Meta>;
   cutVolume: Map<string, number>;
@@ -361,12 +354,8 @@ function Resolution({
   const net = returned - staked;
 
   return (
-    <div className="min-w-0 overflow-hidden rounded-lg border border-hairline bg-surface">
-      <div className="border-b border-hairline px-4 py-2.5">
-        <h2 className="text-sm font-semibold text-foreground">Resolution</h2>
-      </div>
-
-      <div className="flex items-center gap-3 border-b border-hairline px-4 py-3">
+    <Section title="Resolution">
+      <div className="flex items-center gap-3 border-b border-hairline pb-3">
         {winner ? (
           <>
             <CoinIcon
@@ -388,7 +377,7 @@ function Resolution({
         )}
       </div>
 
-      <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 border-b border-hairline px-4 py-3 font-mono text-[11px] tabular-nums">
+      <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 border-b border-hairline py-3 font-mono text-[11px] tabular-nums">
         <dt className="text-muted">opened</dt>
         <dd className="m-0 text-right text-secondary">{hhmm(round.startsAt)}</dd>
         <dt className="text-muted">locked</dt>
@@ -422,8 +411,10 @@ function Resolution({
         </dd>
       </dl>
 
-      <div className="px-4 py-3">
-        <div className="mb-1.5 text-[10px] uppercase tracking-wider text-muted">your round</div>
+      <div className="pt-3">
+        <div className="mat-engrave mb-1.5 text-[10px] uppercase tracking-wider text-muted">
+          your round
+        </div>
         {bets.length ? (
           <div className="flex items-baseline justify-between gap-2 font-mono text-xs tabular-nums">
             <span className="text-muted">
@@ -443,7 +434,7 @@ function Resolution({
           <p className="m-0 text-xs text-muted">You had no positions in this round.</p>
         )}
       </div>
-    </div>
+    </Section>
   );
 }
 
@@ -458,13 +449,10 @@ function TxLog({ bets, meta }: { bets: CryptoBet[]; meta: Map<string, Meta> }) {
   );
 
   return (
-    <div className="flex min-w-0 flex-col overflow-hidden">
-      <div className="flex items-baseline justify-between gap-2 px-1 pb-1">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">Tx log</h2>
-        <span className="shrink-0 text-[11px] text-muted">
-          {ordered.length ? `${ordered.length} filled` : "your bets"}
-        </span>
-      </div>
+    <Section
+      title="Tx log"
+      aside={ordered.length ? `${ordered.length} filled` : "your bets"}
+    >
       <ul className="m-0 max-h-[300px] min-w-0 list-none overflow-y-auto overflow-x-hidden p-0">
         {ordered.map((b) => {
           const tone = TONE[b.direction];
@@ -472,7 +460,7 @@ function TxLog({ bets, meta }: { bets: CryptoBet[]; meta: Map<string, Meta> }) {
           return (
             <li
               key={b.id}
-              className="grid w-full items-center gap-2 overflow-hidden border-b border-hairline/40 px-1 py-1.5 last:border-b-0"
+              className="grid w-full items-center gap-2 overflow-hidden rounded border-b border-[var(--bevel-lo)] px-2 py-1.5 last:border-b-0"
               style={{ gridTemplateColumns: "18px minmax(0,1fr) minmax(0,auto)" }}
             >
               <CoinIcon ticker={b.ticker} src={meta.get(b.symbol)?.imageUrl ?? null} size={18} />
@@ -511,11 +499,11 @@ function TxLog({ bets, meta }: { bets: CryptoBet[]; meta: Map<string, Meta> }) {
           );
         })}
         {!ordered.length && (
-          <li className="px-4 py-6 text-center text-xs text-muted">
-            no positions on this round
+          <li>
+            <Empty>no positions on this round</Empty>
           </li>
         )}
       </ul>
-    </div>
+    </Section>
   );
 }

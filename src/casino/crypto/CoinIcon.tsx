@@ -43,7 +43,10 @@ function CoinFallback({ ticker, size }: { ticker: string; size: number }) {
   return (
     <span
       aria-hidden="true"
-      className="grid shrink-0 place-items-center rounded-full bg-inset font-semibold text-secondary"
+      // A blank disc cut into the panel, with the ticker stamped in it. The
+      // fallback has to hold the same square as the logo it stands in for, or a
+      // broken image reflows the row it sits in.
+      className="mat-inset mat-engrave grid shrink-0 place-items-center rounded-full font-semibold text-secondary"
       style={{ width: size, height: size, fontSize: size * 0.34 }}
     >
       {ticker.slice(0, 3)}

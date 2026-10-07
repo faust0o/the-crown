@@ -5,6 +5,38 @@
     <link rel="icon" type="image/svg+xml" href="/crown-icon.svg" />
     <link rel="apple-touch-icon" href="/crown-icon-180.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!--
+      The theme, resolved before the first paint.
+
+      The palette is still pure CSS — see the token block in src/index.css — but
+      the *choice* is now a person's rather than the browser's, so something has
+      to write it down before anything is drawn. That is all this does: read the
+      stored preference, resolve "auto" against the media query, and stamp
+      `data-theme` on <html>. It is inline and synchronous on purpose; a theme
+      applied from the bundle would paint the wrong palette until the bundle ran.
+
+      src/casino/theme.ts owns it from there — it re-applies on mount and keeps
+      following the system while the preference is "auto". The two agree on the
+      storage key and the attribute, and nothing else.
+
+      There is no `prefers-color-scheme` fallback for a browser that skips this,
+      and there does not need to be: nothing on this page renders without
+      JavaScript, so a visitor who never runs it has no app to theme.
+    -->
+    <script>
+      (function () {
+        var dark = true;
+        try {
+          dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          var stored = localStorage.getItem("crown:theme");
+          if (stored === "dark" || stored === "light") dark = stored === "dark";
+        } catch (e) {
+          /* private mode, or no matchMedia — the default above stands */
+        }
+        document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+      })();
+    </script>
     <title>The Crown · Utopian Contributors</title>
     <meta
       name="description"

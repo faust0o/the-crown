@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { CoinIcon } from "./CoinIcon";
-import { useScrollLock } from "./useScrollLock";
+import { Button, Dialog } from "../ui";
 import type { CryptoBet } from "./graphql";
 
 const LABEL: Record<string, string> = {
@@ -44,17 +44,9 @@ export function BetResult({
   imageUrl: string | null;
   onDismiss: () => void;
 }) {
-  useScrollLock(Boolean(bet));
   const won = bet?.status === "WON";
   const profit = bet ? bet.payout - bet.stake : 0;
   const shown = useCountUp(bet ? Math.abs(profit) : 0);
-
-  useEffect(() => {
-    if (!bet) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onDismiss();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [bet, onDismiss]);
 
   if (!bet) return null;
 
@@ -68,58 +60,46 @@ export function BetResult({
           : "held";
 
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-      onClick={onDismiss}
+    <Dialog
+      open
+      onClose={onDismiss}
+      alert
+      elevated
+      label={won ? "Bet won" : "Bet settled"}
+      className={won ? "casino-result-in mat-won" : "casino-result-in"}
+      bodyClassName="p-6 text-center"
     >
-      <div
-        role="alertdialog"
-        aria-modal="true"
-        aria-label={won ? "Bet won" : "Bet settled"}
-        onClick={(e) => e.stopPropagation()}
-        className="casino-result-in relative w-full max-w-sm overflow-hidden rounded-xl border border-hairline bg-surface p-6 text-center"
-        style={{
-          boxShadow: won
-            ? "0 0 0 1px color-mix(in oklch, var(--up) 40%, transparent), 0 18px 60px -20px color-mix(in oklch, var(--up) 55%, transparent)"
-            : "0 18px 60px -24px rgba(0,0,0,0.5)",
-        }}
-      >
-        {won && <Rays />}
+      {won && <Rays />}
 
-        <div className="relative">
-          <div className="mx-auto mb-3 w-fit casino-result-pop">
-            <CoinIcon ticker={bet.ticker} src={imageUrl} size={44} />
-          </div>
-
-          <div
-            className="text-xs font-semibold uppercase tracking-[0.18em]"
-            style={{ color: won ? "var(--up)" : "var(--text-muted)" }}
-          >
-            {won ? "Bet won" : "Bet lost"}
-          </div>
-
-          <div className="mt-2 font-mono text-4xl tabular-nums text-foreground">
-            {won ? "+" : "−"}
-            {shown.toLocaleString()}
-          </div>
-          <div className="text-xs text-muted">credits</div>
-
-          <p className="mt-4 text-sm text-secondary">
-            {bet.ticker} {moved} from rank {bet.startRank} to {bet.cutRank ?? "—"}. You
-            backed <span className="font-semibold">{LABEL[bet.direction]}</span> at{" "}
-            {bet.odds.toFixed(2)}x.
-          </p>
-
-          <button
-            type="button"
-            onClick={onDismiss}
-            className="mt-5 w-full rounded-md bg-accent px-3 py-2 text-sm font-semibold text-white"
-          >
-            {won ? "Collect" : "Next round"}
-          </button>
+      <div className="relative">
+        <div className="casino-result-pop mx-auto mb-3 w-fit">
+          <CoinIcon ticker={bet.ticker} src={imageUrl} size={44} />
         </div>
+
+        <div
+          className="text-xs font-semibold uppercase tracking-[0.18em]"
+          style={{ color: won ? "var(--up)" : "var(--text-muted)" }}
+        >
+          {won ? "Bet won" : "Bet lost"}
+        </div>
+
+        <div className="mt-2 font-mono text-4xl tabular-nums text-foreground">
+          {won ? "+" : "−"}
+          {shown.toLocaleString()}
+        </div>
+        <div className="text-xs text-muted">credits</div>
+
+        <p className="mt-4 text-sm text-secondary">
+          {bet.ticker} {moved} from rank {bet.startRank} to {bet.cutRank ?? "—"}. You
+          backed <span className="font-semibold">{LABEL[bet.direction]}</span> at{" "}
+          {bet.odds.toFixed(2)}x.
+        </p>
+
+        <Button variant="glass" size="lg" block onClick={onDismiss} className="mt-5">
+          {won ? "Collect" : "Next round"}
+        </Button>
       </div>
-    </div>
+    </Dialog>
   );
 }
 

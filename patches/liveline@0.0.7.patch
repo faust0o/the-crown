@@ -1,0 +1,182 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 4709730f1d6608dee4ffb3a386d1732f776c5f5c..ed15648eaf7dd4cb448a92660180b89d8f93b8a4 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -1450,6 +1450,11 @@ function drawEmpty(ctx, w, h, pad, palette, alpha = 1, now_ms = 0, skipLine = fa
+ var SHAKE_DECAY_RATE = 2e-3;
+ var SHAKE_MIN_AMPLITUDE = 0.2;
+ var FADE_EDGE_WIDTH = 40;
++var SERIES_ICON_SIZE = 14;
++var SERIES_ICON_GAP = 6;
++function iconReady(icon) {
++  return typeof HTMLImageElement === "undefined" || !(icon instanceof HTMLImageElement) || icon.complete && icon.naturalWidth > 0;
++}
+ var CROSSHAIR_FADE_MIN_PX = 5;
+ function createShakeState() {
+   return { amplitude: 0 };
+@@ -1643,7 +1648,7 @@ function drawMultiFrame(ctx, layout, opts) {
+     );
+     ctx.restore();
+     if (pts && pts.length > 0) {
+-      allPts.push({ pts, palette: s.palette, label: s.label, alpha: seriesAlpha });
++      allPts.push({ pts, palette: s.palette, label: s.label, icon: s.icon, alpha: seriesAlpha });
+     }
+   }
+   {
+@@ -1668,7 +1673,11 @@ function drawMultiFrame(ctx, layout, opts) {
+       } else {
+         drawSimpleDot(ctx, lastPt[0], lastPt[1], entry.palette.line, 3);
+       }
+-      if (entry.label) {
++      if (entry.icon) {
++        if (iconReady(entry.icon)) {
++          ctx.drawImage(entry.icon, lastPt[0] + SERIES_ICON_GAP, lastPt[1] - SERIES_ICON_SIZE / 2, SERIES_ICON_SIZE, SERIES_ICON_SIZE);
++        }
++      } else if (entry.label) {
+         ctx.font = '600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
+         ctx.textAlign = "left";
+         ctx.fillStyle = entry.palette.line;
+@@ -2611,7 +2620,8 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+           data: s.data.slice(),
+           value: s.value,
+           palette: s.palette,
+-          label: s.label
++          label: s.label,
++          icon: s.icon
+         }));
+       }
+       if (hasData && !cfg.isMultiSeries) lastMultiSeriesRef.current = [];
+@@ -3066,7 +3076,9 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+     } else if (cfg.isMultiSeries && cfg.multiSeries && cfg.multiSeries.length > 0 || useMultiStash) {
+       const effectiveMultiSeries = useMultiStash ? lastMultiSeriesRef.current : cfg.multiSeries;
+       let labelReserve = 0;
+-      if (effectiveMultiSeries.some((s) => s.label)) {
++      if (effectiveMultiSeries.some((s) => s.icon)) {
++        labelReserve = (SERIES_ICON_SIZE - 2) * chartReveal;
++      } else if (effectiveMultiSeries.some((s) => s.label)) {
+         ctx.font = '600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
+         let maxLabelW = 0;
+         for (const s of effectiveMultiSeries) {
+@@ -3181,7 +3193,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+             if (range.min < globalMin) globalMin = range.min;
+             if (range.max > globalMax) globalMax = range.max;
+           }
+-          seriesEntries.push({ visible, smoothValue: sv, palette: s.palette, label: s.label, alpha });
++          seriesEntries.push({ visible, smoothValue: sv, palette: s.palette, label: s.label, icon: s.icon, alpha });
+         }
+       }
+       if (seriesEntries.length === 0) {
+@@ -3594,7 +3606,8 @@ function Liveline({
+       data: s.data,
+       value: s.value,
+       palette: seriesPalettes.get(s.id) ?? resolveTheme(s.color || SERIES_COLORS[i % SERIES_COLORS.length], theme),
+-      label: s.label
++      label: s.label,
++      icon: s.icon
+     }));
+   }, [seriesProp, seriesPalettes, theme]);
+   const showMomentum = momentum !== false;
+diff --git a/dist/index.d.cts b/dist/index.d.cts
+index 414c4e61bac1017c49bbaedbd1691bcd9cdd667c..d3064e4c2b7430fceddcb67033f290e51c532374 100644
+--- a/dist/index.d.cts
++++ b/dist/index.d.cts
+@@ -45,6 +45,8 @@ interface LivelineSeries {
+     value: number;
+     color: string;
+     label?: string;
++    /** Drawn at the end of the line in place of `label`, at a fixed 14px square. */
++    icon?: CanvasImageSource;
+ }
+ interface LivelineProps {
+     data: LivelinePoint[];
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index 414c4e61bac1017c49bbaedbd1691bcd9cdd667c..d3064e4c2b7430fceddcb67033f290e51c532374 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -45,6 +45,8 @@ interface LivelineSeries {
+     value: number;
+     color: string;
+     label?: string;
++    /** Drawn at the end of the line in place of `label`, at a fixed 14px square. */
++    icon?: CanvasImageSource;
+ }
+ interface LivelineProps {
+     data: LivelinePoint[];
+diff --git a/dist/index.js b/dist/index.js
+index fd0506272e9a54432a0882c3a389ee74302e4718..e49b89ffea0d83dcac7b54629c0bb00307ef55e2 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1423,6 +1423,11 @@ function drawEmpty(ctx, w, h, pad, palette, alpha = 1, now_ms = 0, skipLine = fa
+ var SHAKE_DECAY_RATE = 2e-3;
+ var SHAKE_MIN_AMPLITUDE = 0.2;
+ var FADE_EDGE_WIDTH = 40;
++var SERIES_ICON_SIZE = 14;
++var SERIES_ICON_GAP = 6;
++function iconReady(icon) {
++  return typeof HTMLImageElement === "undefined" || !(icon instanceof HTMLImageElement) || icon.complete && icon.naturalWidth > 0;
++}
+ var CROSSHAIR_FADE_MIN_PX = 5;
+ function createShakeState() {
+   return { amplitude: 0 };
+@@ -1616,7 +1621,7 @@ function drawMultiFrame(ctx, layout, opts) {
+     );
+     ctx.restore();
+     if (pts && pts.length > 0) {
+-      allPts.push({ pts, palette: s.palette, label: s.label, alpha: seriesAlpha });
++      allPts.push({ pts, palette: s.palette, label: s.label, icon: s.icon, alpha: seriesAlpha });
+     }
+   }
+   {
+@@ -1641,7 +1646,11 @@ function drawMultiFrame(ctx, layout, opts) {
+       } else {
+         drawSimpleDot(ctx, lastPt[0], lastPt[1], entry.palette.line, 3);
+       }
+-      if (entry.label) {
++      if (entry.icon) {
++        if (iconReady(entry.icon)) {
++          ctx.drawImage(entry.icon, lastPt[0] + SERIES_ICON_GAP, lastPt[1] - SERIES_ICON_SIZE / 2, SERIES_ICON_SIZE, SERIES_ICON_SIZE);
++        }
++      } else if (entry.label) {
+         ctx.font = '600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
+         ctx.textAlign = "left";
+         ctx.fillStyle = entry.palette.line;
+@@ -2584,7 +2593,8 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+           data: s.data.slice(),
+           value: s.value,
+           palette: s.palette,
+-          label: s.label
++          label: s.label,
++          icon: s.icon
+         }));
+       }
+       if (hasData && !cfg.isMultiSeries) lastMultiSeriesRef.current = [];
+@@ -3039,7 +3049,9 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+     } else if (cfg.isMultiSeries && cfg.multiSeries && cfg.multiSeries.length > 0 || useMultiStash) {
+       const effectiveMultiSeries = useMultiStash ? lastMultiSeriesRef.current : cfg.multiSeries;
+       let labelReserve = 0;
+-      if (effectiveMultiSeries.some((s) => s.label)) {
++      if (effectiveMultiSeries.some((s) => s.icon)) {
++        labelReserve = (SERIES_ICON_SIZE - 2) * chartReveal;
++      } else if (effectiveMultiSeries.some((s) => s.label)) {
+         ctx.font = '600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
+         let maxLabelW = 0;
+         for (const s of effectiveMultiSeries) {
+@@ -3154,7 +3166,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+             if (range.min < globalMin) globalMin = range.min;
+             if (range.max > globalMax) globalMax = range.max;
+           }
+-          seriesEntries.push({ visible, smoothValue: sv, palette: s.palette, label: s.label, alpha });
++          seriesEntries.push({ visible, smoothValue: sv, palette: s.palette, label: s.label, icon: s.icon, alpha });
+         }
+       }
+       if (seriesEntries.length === 0) {
+@@ -3567,7 +3579,8 @@ function Liveline({
+       data: s.data,
+       value: s.value,
+       palette: seriesPalettes.get(s.id) ?? resolveTheme(s.color || SERIES_COLORS[i % SERIES_COLORS.length], theme),
+-      label: s.label
++      label: s.label,
++      icon: s.icon
+     }));
+   }, [seriesProp, seriesPalettes, theme]);
+   const showMomentum = momentum !== false;

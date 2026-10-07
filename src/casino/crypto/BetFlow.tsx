@@ -1,11 +1,12 @@
 import { useQuery } from "@apollo/client/react";
 import { useMemo } from "react";
 import { CRYPTO_BOOK, type BookLevel, type Direction, type Entry, type Standing } from "./graphql";
+import { Empty, Meter, Section, type Tone } from "../ui";
 
-const TONE: Record<Direction, { label: string; color: string }> = {
-  HIGHER: { label: "Higher", color: "var(--up)" },
-  DRAW: { label: "Same", color: "var(--gold)" },
-  LOWER: { label: "Lower", color: "var(--down)" },
+const TONE: Record<Direction, { label: string; tone: Tone }> = {
+  HIGHER: { label: "Higher", tone: "up" },
+  DRAW: { label: "Same", tone: "gold" },
+  LOWER: { label: "Lower", tone: "down" },
 };
 
 /** Matches the board's cadence, so the bars and the price chips move together. */
@@ -55,9 +56,11 @@ export function BetFlow({
     // "no book yet", which is indistinguishable from a broken panel and is
     // exactly what this card shows most of the time otherwise.
     return (
-      <div className="rounded-lg border border-hairline bg-surface p-4 text-center text-xs text-muted">
-        {entry?.isCrown ? "Wearing the crown — no book this round." : "no book yet"}
-      </div>
+      <Section title="Book">
+        <Empty>
+          {entry?.isCrown ? "Wearing the crown — no book this round." : "no book yet"}
+        </Empty>
+      </Section>
     );
   }
 
@@ -65,44 +68,44 @@ export function BetFlow({
   const total = levels.reduce((n, l) => n + l.size, 0);
 
   return (
-    <div className="min-w-0 overflow-hidden rounded-lg border border-hairline bg-surface">
-      <div className="flex items-baseline justify-between border-b border-hairline px-4 py-2.5">
-        <h2 className="text-sm font-semibold text-foreground">
-          Book <span className="font-normal text-muted">· {standing.ticker}</span>
-        </h2>
-        <span
-          className="shrink-0 text-[11px] uppercase tracking-wider text-muted"
-          title="Shares traded on these lines in the last few minutes."
-        >
+    <Section
+      title={`Book · ${standing.ticker}`}
+      aside={
+        <span title="Shares traded on these lines in the last few minutes.">
           {total.toLocaleString()} traded
         </span>
-      </div>
-      <ul className="m-0 list-none p-2">
+      }
+    >
+      <ul className="m-0 list-none p-0">
         {levels.map((l) => {
           const tone = TONE[l.direction];
           return (
-            <li key={l.direction} className="relative mb-1 overflow-hidden rounded last:mb-0">
-              <span
-                aria-hidden="true"
-                className="absolute inset-y-0 left-0 transition-[width] duration-500"
-                style={{
-                  width: `${(100 * l.size) / max}%`,
-                  background: `color-mix(in oklch, ${tone.color} 16%, transparent)`,
-                }}
-              />
-              <span className="relative grid grid-cols-[1fr_auto_auto] items-center gap-2 px-2 py-1.5">
-                <span className="min-w-0 truncate text-xs font-semibold" style={{ color: tone.color }}>
-                  {tone.label}
+            <li key={l.direction} className="mb-1 last:mb-0">
+              <Meter fraction={l.size / max} tone={tone.tone}>
+                <span className="grid grid-cols-[1fr_auto] items-center gap-2 px-2 py-1.5">
+                  {/* Price rides with the name, not with the size: "Higher 49¢"
+                      reads as one quote, where a right-aligned column of cents
+                      reads as a second size. */}
+                  <span className="flex min-w-0 items-baseline gap-1.5">
+                    <span
+                      className="truncate text-xs font-semibold"
+                      style={{ color: "var(--tone)" }}
+                    >
+                      {tone.label}
+                    </span>
+                    <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted">
+                      {l.cents}¢
+                    </span>
+                  </span>
+                  <span className="w-16 text-right font-mono text-xs tabular-nums text-foreground">
+                    {l.size.toLocaleString()}
+                  </span>
                 </span>
-                <span className="font-mono text-[11px] tabular-nums text-muted">{l.cents}¢</span>
-                <span className="w-16 text-right font-mono text-xs tabular-nums text-foreground">
-                  {l.size.toLocaleString()}
-                </span>
-              </span>
+              </Meter>
             </li>
           );
         })}
       </ul>
-    </div>
+    </Section>
   );
 }

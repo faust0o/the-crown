@@ -1,11 +1,13 @@
 import { useCallback, useMemo, useState } from "react";
-import { useColorScheme } from "../hooks/useColorScheme";
+import { useColorScheme } from "../theme";
 import { proxied } from "./proxied";
 import { fallbackColor, useIconColors } from "./useIconColors";
+import { lineIcon } from "./lineIcon";
 import { Liveline } from "liveline";
 import type { LivelinePoint, LivelineSeries } from "liveline";
 
 import type { RankPoint, Standing } from "./graphql";
+import { Section } from "../ui";
 
 
 const formatValue = (v: number) => `${v.toFixed(1)}%`;
@@ -107,7 +109,12 @@ export function VolumeChart({
       // The line takes the logo's own colour, so a series is identifiable
       // against the row it belongs to rather than by legend order.
       color: iconColors.get(proxied(s.imageUrl) ?? "") ?? fallbackColor(s.symbol),
+      // Still feeds the scrub tooltip and the legend.
       label: s.ticker,
+      // Drawn at the line's end in place of the ticker. liveline reserves room
+      // there for its widest label, so text tickers resized the plot — and
+      // shifted every line — whenever the field changed. Icons are all one width.
+      icon: lineIcon(s.symbol, s.ticker, proxied(s.imageUrl)),
     }));
 
     const lead = built.find((b) => b.data.length) ?? built[0];
@@ -127,18 +134,9 @@ export function VolumeChart({
   }, [history, standings, iconColors, hidden, shift]);
 
   return (
-    <div className="min-w-0">
-      <div className="flex items-baseline justify-between px-1 pb-1">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">
-          Volume race
-        </h2>
-        <span className="shrink-0 text-[11px] text-muted">
-          share of field · {replay ? "this round" : `trailing ${window}`}
-        </span>
-      </div>
-
+    <Section title="Volume race">
       <div
-        className="h-[320px] min-h-0 pb-2"
+        className="h-[320px] min-h-0"
         role="img"
         aria-label={`Trailing ${window} traded volume for the ten competing coins`}
       >
@@ -168,7 +166,6 @@ export function VolumeChart({
           padding={{ top: 18, bottom: 40, right: 46, left: 4 }}
         />
       </div>
-
-    </div>
+    </Section>
   );
 }

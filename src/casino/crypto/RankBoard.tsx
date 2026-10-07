@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { formatCompact } from "../format";
+import { Chip, Section, type Tone } from "../ui";
 import { CoinIcon } from "./CoinIcon";
 import { formatPrice } from "./format";
 import type { Direction, Entry, Line, Standing } from "./graphql";
 
 const ROW_H = 76; // px — rows are absolutely positioned so reordering can animate
 
-const TONE: Record<Direction, { label: string; color: string }> = {
-  HIGHER: { label: "Higher", color: "var(--up)" },
-  DRAW: { label: "Same", color: "var(--gold)" },
-  LOWER: { label: "Lower", color: "var(--down)" },
+const TONE: Record<Direction, { label: string; tone: Tone }> = {
+  HIGHER: { label: "Higher", tone: "up" },
+  DRAW: { label: "Same", tone: "gold" },
+  LOWER: { label: "Lower", tone: "down" },
 };
 
 /**
@@ -26,37 +27,29 @@ export function RankBoard({
   entries,
   selected,
   onSelect,
-  window,
 }: {
   standings: Standing[];
   entries: Map<string, Entry>;
   selected: string | null;
   /** Selecting a coin fills the ticket; a price chip also preselects its side. */
   onSelect: (symbol: string, direction?: Direction) => void;
-  window: string;
 }) {
   // Totals across the whole board, so the header states the size of the race.
   const totalVolume = standings.reduce((n, s) => n + s.quoteVolume, 0);
   const totalTrades = standings.reduce((n, s) => n + s.trades1h, 0);
 
   return (
-    <div className="min-w-0 overflow-hidden rounded-lg border border-hairline bg-surface">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-hairline px-4 py-2.5">
-        <h2 className="text-sm font-semibold text-foreground">
-          The Field
-          <span className="ml-2 font-mono text-xs font-normal tabular-nums text-secondary">
-            ${formatCompact(totalVolume)}
-          </span>
-          <span className="ml-2 font-mono text-xs font-normal tabular-nums text-secondary">
-            {formatCompact(totalTrades)} tx
-          </span>
-        </h2>
-        <span className="shrink-0 text-[11px] uppercase tracking-wider text-muted">
-          volume · trailing {window}
+    <Section
+      title="The Field"
+      className="mt-0.5"
+      aside={
+        <span className="font-mono tabular-nums">
+          ${formatCompact(totalVolume)} · {formatCompact(totalTrades)} tx
         </span>
-      </div>
+      }
+    >
       <ol
-        className="relative m-0 list-none p-2"
+        className="relative m-0 list-none p-0"
         style={{ height: standings.length * ROW_H + 8 }}
       >
         {standings.map((s, slot) => (
@@ -70,7 +63,7 @@ export function RankBoard({
           />
         ))}
       </ol>
-    </div>
+    </Section>
   );
 }
 
@@ -116,8 +109,8 @@ function RankRow({
           onSelect(s.symbol);
         }
       }}
-      className={`absolute inset-x-2 flex cursor-pointer items-center gap-3 overflow-hidden rounded-md px-2 ${
-        selected ? "ring-2 ring-accent" : ""
+      className={`absolute inset-x-0 flex cursor-pointer items-center gap-3 overflow-hidden rounded-lg px-2 ${
+        selected ? "mat-row-on" : "hover:bg-[color-mix(in_oklch,var(--foreground)_4%,transparent)]"
       }`}
       style={{
         height: ROW_H - 4,
@@ -127,7 +120,7 @@ function RankRow({
             ? "color-mix(in oklch, var(--up) 14%, transparent)"
             : moved === "down"
               ? "color-mix(in oklch, var(--down) 14%, transparent)"
-              : "transparent",
+              : undefined,
         transitionProperty: "transform, background-color",
         transitionDuration: "520ms, 900ms",
         transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
@@ -206,12 +199,11 @@ function PriceChip({
   onSelect: (symbol: string, direction?: Direction) => void;
 }) {
   const tone = TONE[line.direction];
-  const disabled = !line.available;
 
   return (
-    <button
-      type="button"
-      disabled={disabled}
+    <Chip
+      tone={tone.tone}
+      disabled={!line.available}
       onClick={(e) => {
         e.stopPropagation(); // the row's own click would drop the side
         onSelect(symbol, line.direction);
@@ -221,13 +213,12 @@ function PriceChip({
           ? `${tone.label} — ${line.cents}¢, pays ${line.multiplier.toFixed(2)}x`
           : `${tone.label} is impossible from this rank`
       }
-      className="w-[74px] shrink-0 rounded-md border px-2 py-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-      style={{
-        borderColor: `color-mix(in oklch, ${tone.color} 35%, transparent)`,
-        backgroundColor: `color-mix(in oklch, ${tone.color} 7%, transparent)`,
-      }}
+      className="w-[74px] shrink-0 px-2 py-1.5"
     >
-      <span className="block text-[10px] font-semibold uppercase tracking-wide" style={{ color: tone.color }}>
+      <span
+        className="block text-[10px] font-semibold uppercase tracking-wide"
+        style={{ color: "var(--tone)" }}
+      >
         {tone.label}
       </span>
       <span className="block font-mono text-xs tabular-nums text-foreground">
@@ -236,7 +227,7 @@ function PriceChip({
           <span className="ml-1 text-[10px] text-muted">{line.multiplier.toFixed(1)}x</span>
         )}
       </span>
-    </button>
+    </Chip>
   );
 }
 

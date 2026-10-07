@@ -2,6 +2,7 @@ import { useClock } from "../hooks/useClock";
 import { CoinIcon } from "./CoinIcon";
 import { formatCompact } from "../format";
 import type { FlowEvent } from "./graphql";
+import { Empty, Section } from "../ui";
 
 /**
  * Board movements as they happen.
@@ -37,25 +38,26 @@ export function FlowFeed({
         : `synced ${age < 90 ? `${age}s` : `${Math.round(age / 60)}m`} ago`);
 
   return (
-    <div className="flex min-w-0 flex-col overflow-hidden">
-      <div className="flex items-baseline justify-between px-1 pb-1">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">Flow</h2>
-        {/* Fixed box and tabular figures — this rewrites every second, and
-            letting it size itself shifted the column heading around. */}
+    <Section
+      title="Flow"
+      aside={
+        /* Fixed box and tabular figures — this rewrites every second, and
+           letting it size itself shifted the column heading around. */
         <span
-          className="w-[96px] shrink-0 whitespace-nowrap text-right text-[11px] tabular-nums text-muted"
+          className="block w-[96px] whitespace-nowrap text-right tabular-nums"
           title={note ? undefined : "tokens.xyz republishes about once a minute"}
         >
           {sync}
         </span>
-      </div>
+      }
+    >
       <ul className="m-0 max-h-[460px] min-w-0 list-none overflow-y-auto overflow-x-hidden p-0">
         {events.map((e) => {
           const up = e.from == null || e.to < e.from;
           return (
             <li
               key={`${e.symbol}-${e.at}-${e.to}`}
-              className="casino-tape-in grid w-full items-center gap-2 overflow-hidden border-b border-hairline/40 px-1 py-1.5 last:border-b-0"
+              className="casino-tape-in grid w-full items-center gap-2 overflow-hidden rounded border-b border-[var(--bevel-lo)] px-2 py-1.5 last:border-b-0"
               style={{ gridTemplateColumns: "18px minmax(0,auto) minmax(0,1fr) minmax(0,auto)" }}
             >
               <CoinIcon ticker={e.ticker} src={e.imageUrl} size={18} />
@@ -75,9 +77,11 @@ export function FlowFeed({
           );
         })}
         {!events.length && (
-          <li className="px-4 py-6 text-center text-xs text-muted">watching for moves…</li>
+          <li>
+            <Empty>watching for moves…</Empty>
+          </li>
         )}
       </ul>
-    </div>
+    </Section>
   );
 }

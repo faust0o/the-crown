@@ -1,158 +1,75 @@
-import { WalletReadyState } from "@solana/wallet-adapter-base";
 import { useSession } from "../session/SessionProvider";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useEffect, useRef, useState } from "react";
 import { CLUSTER, explorerUrl, shortAddress } from "../chain/program";
 import { useCrownWallet } from "../chain/wallet";
-import { formatCredits, formatSol } from "../format";
-import { useScrollLock } from "./useScrollLock";
+import { formatSol } from "../format";
+import { Button, Panel, Seam, Tag } from "../ui";
+import { useSignInPrompt } from "./useSignIn";
+import { WalletPicker } from "./WalletPicker";
 
 /**
- * Pick a wallet.
+ * Re-attach a wallet to a session that has one signed in already.
  *
- * wallet-adapter ships this dialog, and its stylesheet is a fixed dark palette
- * with its own radii and font — dropped into the casino it reads as a different
- * product, and in light mode it is a black box on a white page. The list itself
- * is four lines, so this renders it in the app's own language instead. Selecting
- * is all it does: `autoConnect` on the provider takes it from there, and calling
- * `connect()` here would race the state update that `select()` schedules.
+ * Lives in the top-up card, which is the one place that still needs a wallet
+ * without needing an account: the session is the token, so closing the
+ * extension leaves a player signed in with nothing to pay from. Signing in is
+ * `SignInButton`'s job, not this one's.
  */
-export function WalletPicker({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { wallets, select } = useWallet();
-  const first = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    first.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
-  useScrollLock(open);
-
-  if (!open) return null;
-
-  // Unsupported is not "install this" — it is a wallet that cannot run on this
-  // platform at all, and offering it is offering a dead end.
-  const usable = wallets.filter((w) => w.readyState !== WalletReadyState.Unsupported);
-  const detected = usable.filter((w) => w.readyState === WalletReadyState.Installed);
-  const rest = usable.filter((w) => w.readyState !== WalletReadyState.Installed);
-
+export function ConnectWalletButton() {
+  const { connecting } = useCrownWallet();
+  const [picking, setPicking] = useState(false);
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Connect a wallet"
-        onClick={(e) => e.stopPropagation()}
-        className="casino-animate-in w-full max-w-sm rounded-lg border border-hairline bg-surface p-6"
-      >
-        <div className="mb-1 flex items-start justify-between gap-4">
-          <h2 className="text-base font-semibold text-foreground">Connect a wallet</h2>
-          <span className="rounded border border-hairline px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted">
-            {CLUSTER}
-          </span>
-        </div>
-        <p className="text-xs leading-relaxed text-secondary">
-          Your wallet is a second identity, not a replacement — you still need an
-          invite code to hold credits. Connecting signs nothing.
-        </p>
-
-        {usable.length === 0 ? (
-          <p className="mt-4 rounded border border-hairline bg-inset px-3 py-4 text-center text-xs text-muted">
-            No Solana wallet found in this browser.{" "}
-            <a
-              href="https://phantom.app/download"
-              target="_blank"
-              rel="noreferrer"
-              className="text-accent hover:underline"
-            >
-              Install Phantom
-            </a>{" "}
-            and reload.
-          </p>
-        ) : (
-          <ul className="mt-4 m-0 list-none space-y-1.5 p-0">
-            {[...detected, ...rest].map((w, i) => {
-              const installed = w.readyState === WalletReadyState.Installed;
-              const shared =
-                "flex w-full items-center gap-3 rounded-md border border-hairline px-3 py-2.5 text-left transition-colors hover:border-accent";
-              return (
-                <li key={w.adapter.name}>
-                  {installed || w.readyState === WalletReadyState.Loadable ? (
-                    <button
-                      ref={i === 0 ? first : undefined}
-                      type="button"
-                      onClick={() => {
-                        select(w.adapter.name);
-                        onClose();
-                      }}
-                      className={shared}
-                    >
-                      <img src={w.adapter.icon} alt="" aria-hidden="true" className="h-6 w-6" />
-                      <span className="flex-1 text-sm text-foreground">{w.adapter.name}</span>
-                      {installed && (
-                        <span className="text-[10px] uppercase tracking-wider text-muted">
-                          detected
-                        </span>
-                      )}
-                    </button>
-                  ) : (
-                    // Not installed: a button here would select a wallet that
-                    // can never connect, so the row becomes the install link it
-                    // actually is.
-                    <a
-                      href={w.adapter.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className={`${shared} no-underline`}
-                    >
-                      <img
-                        src={w.adapter.icon}
-                        alt=""
-                        aria-hidden="true"
-                        className="h-6 w-6 opacity-50"
-                      />
-                      <span className="flex-1 text-sm text-muted">{w.adapter.name}</span>
-                      <span className="text-[10px] uppercase tracking-wider text-secondary">
-                        install ↗
-                      </span>
-                    </a>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-
-        <button
-          type="button"
-          onClick={onClose}
-          className="mt-4 w-full rounded-md border border-hairline px-3 py-2 text-sm text-muted transition-colors hover:text-foreground"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
+    <>
+      <Button size="sm" disabled={connecting} onClick={() => setPicking(true)}>
+        {connecting ? "Connecting…" : "Connect wallet"}
+      </Button>
+      <WalletPicker open={picking} onClose={() => setPicking(false)} />
+    </>
   );
 }
 
 /**
- * The header's wallet control: connect, or the account it is connected to.
+ * The only door: connect a wallet and sign in with it.
  *
- * Sits beside the invite-code button rather than replacing it. Both can be
- * present, one can be present, neither can be — the game only requires the code.
+ * One control rather than two steps, because they are not two decisions. A
+ * visitor picks a wallet, approves a sentence, and has an account — there is
+ * nothing to register and no code to have been given. If a wallet is already
+ * connected there is nothing to pick, so it goes straight to the signature.
  */
+export function SignInButton() {
+  const { connecting } = useCrownWallet();
+  const { signingIn, error } = useSession();
+  const { promptSignIn, picker } = useSignInPrompt();
+
+  return (
+    <>
+      {/* The blue buy lamp rather than amber: signing in is the first step
+          towards a buy, not a sell. */}
+      <Button
+        variant="glass"
+        side="buy"
+        size="sm"
+        disabled={signingIn}
+        title={error ?? undefined}
+        onClick={promptSignIn}
+      >
+        {signingIn ? "Check your wallet…" : connecting ? "Connecting…" : "Sign in"}
+      </Button>
+      {picker}
+    </>
+  );
+}
+
+/** One row of the account menu. */
+const ITEM =
+  "rounded px-2 py-1.5 text-left text-xs text-secondary transition-colors " +
+  "hover:bg-[color-mix(in_oklch,var(--foreground)_7%,transparent)] hover:text-foreground";
+
 export function WalletButton() {
-  const { wallet, connected } = useWallet();
-  const { address, connecting, sol } = useCrownWallet();
-  // The balance is the account's, not the wallet's — the wallet only pays for it.
-  const { user } = useSession();
-  const credits = user?.credits ?? null;
+  const { wallet, connected, disconnect } = useWallet();
+  const { address, sol } = useCrownWallet();
+  const { user, logout } = useSession();
   const [picking, setPicking] = useState(false);
   const [menu, setMenu] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -180,99 +97,131 @@ export function WalletButton() {
     return () => clearTimeout(timer);
   }, [copied]);
 
-  if (!connected || !address) {
-    return (
-      <>
-        <button
-          type="button"
-          disabled={connecting}
-          onClick={() => setPicking(true)}
-          className="rounded-md border border-hairline px-3 py-1.5 text-xs font-semibold text-foreground transition-colors hover:border-accent disabled:opacity-50"
-        >
-          {connecting ? "Connecting…" : "Connect wallet"}
-        </button>
-        <WalletPicker open={picking} onClose={() => setPicking(false)} />
-      </>
-    );
-  }
+  const wired = connected && address;
+
+  // Signed out there is no account to open a menu on. `SignInButton` stands in
+  // its place — see the header.
+  if (!user) return null;
+
+  const leave = () => {
+    setMenu(false);
+    // The wallet goes with the session because it *is* the session: leaving one
+    // connected after signing out would re-offer the signature prompt to
+    // somebody who just said they were done.
+    void disconnect().catch(() => {});
+    logout();
+  };
 
   return (
     <div ref={anchor} className="relative">
-      <button
-        type="button"
+      <Button
+        size="sm"
         aria-expanded={menu}
         aria-haspopup="menu"
         onClick={() => setMenu((v) => !v)}
-        title={address}
-        className="flex items-center gap-2 rounded-md border border-hairline px-3 py-1.5 transition-colors hover:border-accent"
+        title={wired ? address : (user?.handle ?? "Account")}
       >
-        <span
-          aria-hidden="true"
-          className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
-          style={{ background: "var(--up)" }}
-        />
         <span className="font-mono text-xs tabular-nums text-foreground">
-          {shortAddress(address)}
+          {wired ? shortAddress(address) : (user?.handle ?? "Account")}
         </span>
-      </button>
+      </Button>
 
       {menu && (
-        <div
+        <Panel
           role="menu"
-          className="casino-animate-in absolute right-0 z-40 mt-2 w-64 rounded-lg border border-hairline bg-surface p-3 shadow-lg"
+          className="casino-animate-in absolute right-0 z-40 mt-2 w-64 p-3"
         >
           <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-semibold text-foreground">
-              {wallet?.adapter.name ?? "Wallet"}
+            <span className="mat-engrave text-xs font-semibold text-foreground">
+              {wired ? (wallet?.adapter.name ?? "Wallet") : (user?.handle ?? "Account")}
             </span>
-            <span className="rounded border border-hairline px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted">
-              {CLUSTER}
-            </span>
+            <Tag>{CLUSTER}</Tag>
           </div>
 
-          <p className="mt-2 break-all font-mono text-[11px] leading-snug text-secondary select-all">
-            {address}
-          </p>
+          {wired && (
+            <p className="mt-2 break-all font-mono text-[11px] leading-snug text-secondary select-all">
+              {address}
+            </p>
+          )}
 
-          <dl className="mt-3 m-0 space-y-1 border-t border-hairline pt-2 text-[11px]">
-            <div className="flex items-baseline justify-between gap-2">
-              <dt className="text-muted">SOL</dt>
-              <dd className="m-0 font-mono tabular-nums text-foreground">{formatSol(sol)}</dd>
-            </div>
-            <div className="flex items-baseline justify-between gap-2">
-              <dt className="text-muted">credits</dt>
-              <dd className="m-0 font-mono tabular-nums text-foreground">
-                {credits == null ? "—" : formatCredits(credits)}
-              </dd>
-            </div>
-          </dl>
+          {/*
+            SOL, and not the credit balance beside it.
 
-          <div className="mt-3 flex flex-col gap-1 border-t border-hairline pt-2">
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                void navigator.clipboard?.writeText(address).then(
-                  () => setCopied(true),
-                  () => {}
-                );
-              }}
-              className="rounded px-2 py-1.5 text-left text-xs text-secondary transition-colors hover:bg-inset hover:text-foreground"
-            >
-              {copied ? "Copied" : "Copy address"}
-            </button>
-            <a
-              role="menuitem"
-              href={explorerUrl(address)}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded px-2 py-1.5 text-xs text-secondary no-underline transition-colors hover:bg-inset hover:text-foreground"
-            >
-              View on explorer ↗
-            </a>
+            The header already prints credits, permanently, two centimetres to
+            the left of this panel — so the row was the same number twice, and
+            the menu read as a balance sheet rather than as the account controls
+            it exists for. What SOL is doing for is the only figure in here that
+            is about the *wallet*, which is what this menu is about.
+          */}
+          {wired && (
+            <>
+              <Seam className="mt-3" />
+              <dl className="m-0 mt-2 space-y-1 text-[11px]">
+                <div className="flex items-baseline justify-between gap-2">
+                  <dt className="text-muted">SOL</dt>
+                  <dd className="m-0 font-mono tabular-nums text-foreground">{formatSol(sol)}</dd>
+                </div>
+              </dl>
+            </>
+          )}
+
+          <Seam className="mt-3" />
+          <div className="mt-2 flex flex-col gap-1">
+            {wired ? (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(address).then(
+                      () => setCopied(true),
+                      () => {}
+                    );
+                  }}
+                  className={ITEM}
+                >
+                  {copied ? "Copied" : "Copy address"}
+                </button>
+                <a
+                  role="menuitem"
+                  href={explorerUrl(address)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`${ITEM} no-underline`}
+                >
+                  View on explorer ↗
+                </a>
+              </>
+            ) : (
+              // A session with no wallet behind it yet. The picker is the one
+              // thing this menu can offer that the header no longer does.
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMenu(false);
+                  setPicking(true);
+                }}
+                className={ITEM}
+              >
+                Connect a wallet
+              </button>
+            )}
           </div>
-        </div>
+
+          {user && (
+            <>
+              <Seam className="mt-3" />
+              <div className="mt-2 flex flex-col gap-1">
+                <button type="button" role="menuitem" onClick={leave} className={ITEM}>
+                  Log out
+                </button>
+              </div>
+            </>
+          )}
+        </Panel>
       )}
+      <WalletPicker open={picking} onClose={() => setPicking(false)} />
     </div>
   );
 }

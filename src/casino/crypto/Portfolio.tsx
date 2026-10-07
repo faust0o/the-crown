@@ -1,11 +1,12 @@
 import { CoinIcon } from "./CoinIcon";
 import type { CryptoBet, Direction, Standing } from "./graphql";
 import { TopUpCard } from "./TopUp";
+import { Empty, Readout, Section, TONE_COLOR, type Tone } from "../ui";
 
-const TONE: Record<Direction, { label: string; color: string }> = {
-  HIGHER: { label: "Higher", color: "var(--up)" },
-  DRAW: { label: "Same", color: "var(--gold)" },
-  LOWER: { label: "Lower", color: "var(--down)" },
+const TONE: Record<Direction, { label: string; tone: Tone }> = {
+  HIGHER: { label: "Higher", tone: "up" },
+  DRAW: { label: "Same", tone: "gold" },
+  LOWER: { label: "Lower", tone: "down" },
 };
 
 const STATUS: Record<string, string> = {
@@ -44,16 +45,16 @@ export function Portfolio({
       */}
       <TopUpCard credits={credits} />
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="credits" value={credits?.toLocaleString() ?? "—"} />
-        <Stat label="open stake" value={staked.toLocaleString()} />
-        <Stat label="to win" value={atRisk.toLocaleString()} />
-        <Stat
+      <Section title="Balance" bodyClassName="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <Readout label="credits" value={credits?.toLocaleString() ?? "—"} />
+        <Readout label="open stake" value={staked.toLocaleString()} />
+        <Readout label="to win" value={atRisk.toLocaleString()} />
+        <Readout
           label="settled P/L"
           value={`${net >= 0 ? "+" : ""}${net.toLocaleString()}`}
           color={net > 0 ? "var(--up)" : net < 0 ? "var(--down)" : undefined}
         />
-      </div>
+      </Section>
 
       <Table title="Open positions" bets={open} empty="No open positions this round." logoFor={logoFor} />
       <Table title="History" bets={done} empty="Nothing settled yet." logoFor={logoFor} />
@@ -61,25 +62,11 @@ export function Portfolio({
   );
 }
 
-function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
-    <div className="rounded-lg border border-hairline bg-surface px-3 py-2">
-      <div className="text-[10px] uppercase tracking-wider text-muted">{label}</div>
-      <div className="font-mono text-lg tabular-nums" style={{ color: color ?? "var(--foreground)" }}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
 function Table({ title, bets, empty, logoFor }: { title: string; bets: CryptoBet[]; empty: string; logoFor: Map<string, string | null> }) {
   return (
-    <div className="min-w-0 overflow-hidden rounded-lg border border-hairline bg-surface">
-      <div className="border-b border-hairline px-4 py-2.5">
-        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-      </div>
+    <Section title={title}>
       {!bets.length ? (
-        <p className="px-4 py-6 text-center text-xs text-muted">{empty}</p>
+        <Empty>{empty}</Empty>
       ) : (
         <ul className="m-0 max-h-[420px] list-none overflow-y-auto overflow-x-hidden p-0">
           {bets.map((b) => {
@@ -88,14 +75,14 @@ function Table({ title, bets, empty, logoFor }: { title: string; bets: CryptoBet
             return (
               <li
                 key={b.id}
-                className="grid w-full items-center gap-2 overflow-hidden border-b border-hairline/60 px-3 py-2 last:border-b-0"
+                className="grid w-full items-center gap-2 overflow-hidden border-b border-hairline px-1 py-2 last:border-b-0"
                 style={{ gridTemplateColumns: "22px minmax(0,1fr) minmax(0,auto) 56px 62px" }}
               >
                 <CoinIcon ticker={b.ticker} src={logoFor.get(b.symbol) ?? null} size={22} />
                 <span className="min-w-0">
                   <span className="block truncate text-xs font-semibold text-foreground">
                     {b.ticker}
-                    <span className="ml-1.5 font-normal" style={{ color: tone.color }}>
+                    <span className="ml-1.5 font-normal" style={{ color: TONE_COLOR[tone.tone] }}>
                       {tone.label}
                     </span>
                   </span>
@@ -122,6 +109,6 @@ function Table({ title, bets, empty, logoFor }: { title: string; bets: CryptoBet
           })}
         </ul>
       )}
-    </div>
+    </Section>
   );
 }

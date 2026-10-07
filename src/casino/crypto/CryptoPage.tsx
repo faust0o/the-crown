@@ -1,35 +1,47 @@
 import { useMutation, useQuery } from "@apollo/client/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useWallet } from "@solana/wallet-adapter-react";
 import { SessionProvider, useSession } from "../session/SessionProvider";
+import {
+  Button,
+  IconButton,
+  Panel,
+  Rail,
+  Segmented,
+  ThemeToggle,
+} from "../ui";
 import { BetFlow } from "./BetFlow";
 import { BetPanel } from "./BetPanel";
 import { BetResult } from "./BetResult";
-import { BotTape } from "./BotTape";
 import { FlowFeed } from "./FlowFeed";
 import {
   BOARD,
-  CASH_OUT,
   PLACE_BET,
   ROUNDS,
+  SELL_POSITION,
   type Direction,
-  type Round,
+  type RoundResult,
   type Standing,
 } from "./graphql";
 import { HowItWorks } from "./HowItWorks";
-import { InviteDialog } from "./InviteDialog";
+import { Orders } from "./Orders";
 import { Portfolio } from "./Portfolio";
 import { PreviousRounds } from "./PreviousRounds";
 import { RankBoard } from "./RankBoard";
-import { RoundBar } from "./RoundBar";
+import { RoundClock } from "./RoundClock";
 import { RoundReplay } from "./RoundReplay";
 import { VolumeChart } from "./VolumeChart";
-import { WalletButton } from "./WalletButton";
+import { useSignInPrompt } from "./useSignIn";
+import { SignInButton, WalletButton } from "./WalletButton";
 
 /** Matches the oracle's own re-rank cadence — no point polling faster. */
 const POLL_MS = 2_000;
 
 type Tab = "board" | "portfolio";
+
+const TABS = [
+  { value: "board", label: "Board" },
+  { value: "portfolio", label: "Portfolio" },
+] as const satisfies readonly { value: Tab; label: string }[];
 
 /** Set the document title while this page is mounted, restoring it on exit. */
 function useTitle(title: string) {
@@ -81,15 +93,19 @@ export default function CryptoPage() {
 function CrownInner() {
   useTitle("The Crown · Utopian Contributors");
   useFavicon("/crown-icon.svg", "image/svg+xml");
-  const { user, login, logout } = useSession();
-  const { disconnect: disconnectWallet } = useWallet();
+  const { user } = useSession();
+  // The same door the header opens, reachable from the ticket — see `onPlace`.
+  const { promptSignIn, picker } = useSignInPrompt();
   const [tab, setTab] = useState<Tab>("board");
   const [howOpen, setHowOpen] = useState(false);
-  const [inviteOpen, setInviteOpen] = useState(false);
   const [pastOpen, setPastOpen] = useState(false);
   // A settled round — picked out of the list, or the one they were just
   // watching. Either way the board tab replays it until they come back.
-  const [replay, setReplay] = useState<Round | null>(null);
+  // `RoundResult`, not `Round`: a replay is drawn from a finished round's
+  // results, and the history panel hands over exactly those. A live round
+  // satisfies it too, which is what lets the round that just ended slide
+  // straight into the replay.
+  const [replay, setReplay] = useState<RoundResult | null>(null);
   const [replayIsFresh, setReplayIsFresh] = useState(false);
   /** The round that ended under the player, waiting on its settlement. */
   const [ended, setEnded] = useState<string | null>(null);
@@ -121,8 +137,8 @@ function CrownInner() {
     errorPolicy: "all",
   });
   const [placeBet] = useMutation(PLACE_BET);
-  const [cashOut] = useMutation(CASH_OUT);
-  const [closing, setClosing] = useState<string | null>(null);
+  const [sellPosition] = useMutation(SELL_POSITION);
+  const [selling, setSelling] = useState(false);
 
   const standings = useMemo(() => data?.cryptoStandings ?? [], [data?.cryptoStandings]);
   const round = data?.cryptoRound ?? null;
@@ -256,12 +272,16 @@ function CrownInner() {
   );
 
   const open = round?.status === "OPEN" && new Date(round.lockAt).getTime() > Date.now();
-  const bettable = Boolean(user) && open;
-  const disabledReason = !user
-    ? "Redeem an invite code to place a bet."
-    : !open
-      ? "Betting is closed for this round."
-      : null;
+  /**
+   * Being signed out is no longer a refusal.
+   *
+   * It used to be the first thing the ticket said, which made "sign in" read as
+   * the reason a bet had failed rather than as the next step in placing one.
+   * The panel now takes the composition either way and the Buy key opens the
+   * wallet dialog, so the only thing left to refuse a *whole panel* over is the
+   * round itself.
+   */
+  const disabledReason = open ? null : "Betting is closed for this round.";
 
   // Default the ticket to whoever leads, so the panel is never empty.
   const activeSymbol = selected ?? field[0]?.symbol ?? null;
@@ -272,12 +292,14 @@ function CrownInner() {
   /**
    * Is there anything for the buy panel to do?
    *
-   * A balance is the usual answer, but not the only one: the panel also carries
-   * the position list and its Close controls, so a player who has spent their
-   * last dollar into a position still needs it. Keying purely on the balance
-   * would take the exit away from the one person guaranteed to be looking for it.
+   * A balance is the usual answer, but not the only one: the panel's Sell tab
+   * is the exit from an open position, so a player who has spent their last
+   * dollar into one still needs it. Keying purely on the balance would take the
+   * exit away from the one person guaranteed to be looking for it — and keying
+   * on *any* position would keep the panel up for someone whose lots have all
+   * been sold, which is the portfolio's story now, not the ticket's.
    */
-  const charged = (credits ?? 0) > 0 || roundBets.length > 0;
+  const charged = (credits ?? 0) > 0 || roundBets.some((b) => b.status === "OPEN");
 
   const onSelect = useCallback((symbol: string, dir?: Direction) => {
     setSelected(symbol);
@@ -286,8 +308,12 @@ function CrownInner() {
 
   const onPlace = useCallback(
     async (stake: number) => {
+      // No account yet: the key is a door. `promptSignIn` puts the wallet
+      // picker up as well as arming the signature, because `signIn()` alone
+      // waits for a key that a visitor with no wallet connected never supplies
+      // — so the tap did nothing visible at all.
       if (!user) {
-        setInviteOpen(true);
+        promptSignIn();
         return;
       }
       if (!activeSymbol) return;
@@ -302,29 +328,45 @@ function CrownInner() {
         setBusy(false);
       }
     },
-    [user, placeBet, activeSymbol, direction, refetch]
+    [user, promptSignIn, placeBet, activeSymbol, direction, refetch]
   );
 
-  const onClosePosition = useCallback(
-    async (id: string) => {
-      setClosing(id);
+  /**
+   * Sell part or all of one line's position.
+   *
+   * Addressed by line rather than by lot: the panel sells `(coin, direction,
+   * amount)` and the server takes it out of the rows it is spread across, oldest
+   * first. One call however many bets it reaches into — a client looping a
+   * mutation per lot would walk the book down once per call and get a worse
+   * price for a position that happened to be assembled in pieces.
+   */
+  const onSellPosition = useCallback(
+    async (dir: Direction, stake: number) => {
+      if (!activeSymbol) return;
+      setSelling(true);
       try {
-        await cashOut({ variables: { id } });
+        await sellPosition({ variables: { symbol: activeSymbol, direction: dir, stake } });
         await refetch();
       } catch (err) {
-        setToast(err instanceof Error ? err.message : "Could not close that position.");
+        setToast(err instanceof Error ? err.message : "Could not sell that position.");
         setTimeout(() => setToast(null), 4000);
       } finally {
-        setClosing(null);
+        setSelling(false);
       }
     },
-    [cashOut, refetch]
+    [sellPosition, activeSymbol, refetch]
   );
 
   return (
     <div className="casino flex min-h-dvh flex-col">
-      <header className="border-b border-hairline">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-6 py-3">
+      {/*
+        The case, top to bottom: a walnut rail, the machined header, the work
+        surface, and the same rail again to close it off. The wood is the only
+        place in the app it appears — it is what separates the instrument from
+        the room, and repeating it inside the panels would be trim on trim.
+      */}
+      <header className="mat-panel-flush mat-grain sticky top-0 z-30 rounded-none border-x-0 border-t-0">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 px-6 py-3">
           <a href="/" className="flex items-center gap-2.5 no-underline">
             <img
               src="/crown-icon.svg"
@@ -335,44 +377,63 @@ function CrownInner() {
               className="h-7 w-7 shrink-0 rounded"
             />
             <span className="flex flex-col leading-tight">
-              <span className="text-lg font-semibold text-foreground">The Crown</span>
-              <span className="hidden text-xs text-muted sm:block">ten trending assets, one ranking</span>
+              <span className="mat-engrave text-lg font-semibold text-foreground">
+                The Crown
+              </span>
+              <span className="hidden text-xs text-muted sm:block">
+                ten trending assets, one ranking
+              </span>
             </span>
           </a>
 
-          <nav role="tablist" aria-label="Section" className="flex items-center gap-1 rounded-lg border border-hairline bg-inset p-1">
-            {(["board", "portfolio"] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                role="tab"
-                aria-selected={tab === t}
-                onClick={() => setTab(t)}
-                className={`rounded px-2.5 py-1 text-xs capitalize transition-colors ${
-                  tab === t ? "bg-surface font-semibold text-foreground" : "text-muted"
-                }`}
-              >
-                {t}
-              </button>
-            ))}
-          </nav>
+          <Segmented
+            tabs
+            label="Section"
+            value={tab}
+            onChange={setTab}
+            options={TABS}
+          />
 
-          <div className="ml-auto flex items-center gap-4">
-            <button
-              type="button"
+          {/*
+            Always on screen. It used to be a bar at the top of the board, which
+            scrolled away — so it was possible to be composing a bet with no
+            idea how long was left to place it.
+          */}
+          <RoundClock round={round} />
+
+          <div className="ml-auto flex items-center gap-3">
+            <Button
+              variant="ghost"
               onClick={() => setPastOpen(true)}
-              className="hidden text-xs text-secondary hover:text-foreground sm:block"
+              className="hidden text-xs sm:block"
             >
               Previous rounds
-            </button>
-            <button
-              type="button"
-              onClick={() => setHowOpen(true)}
-              aria-label="How it works"
-              title="How it works"
-              className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-muted transition-colors hover:text-foreground"
-            >
-              <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true" fill="none">
+            </Button>
+            <ThemeToggle />
+            {/*
+              Signed out, exactly one door — and now it is the wallet.
+
+              There used to be two side by side, "Connect wallet" and "Enter
+              invite code", and then only the code, because a wallet could not
+              make an account. It can: a signature over a nonce the server chose
+              is proof of the key, which is all an account here ever was. So the
+              header asks for the one thing a visitor already has.
+            */}
+            {user ? (
+              <>
+                <WalletButton />
+                {/* Just the balance. Leaving is an account action and lives in
+                    the account menu beside it — see `WalletButton`. */}
+                <span className="mat-inset mat-engrave rounded-md px-2.5 py-1 font-mono text-sm tabular-nums text-foreground">
+                  {(credits ?? 0).toLocaleString()}
+                  <span className="ml-1 text-muted">cr</span>
+                </span>
+              </>
+            ) : (
+              <SignInButton />
+            )}
+            <IconButton label="How it works" size="sm" onClick={() => setHowOpen(true)}>
+              <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" aria-hidden="true" fill="none">
                 <circle cx="12" cy="12" r="9.25" stroke="currentColor" strokeWidth="1.5" />
                 <path
                   d="M9.6 9.2a2.5 2.5 0 1 1 3.2 2.4c-.6.2-.9.7-.9 1.3v.5"
@@ -382,51 +443,10 @@ function CrownInner() {
                 />
                 <circle cx="11.9" cy="16.4" r="0.95" fill="currentColor" />
               </svg>
-            </button>
-            {/*
-              Beside the invite button, never instead of it. A wallet is a second
-              identity that removes the prompt from every bet; the code is still
-              what makes an account.
-            */}
-            <WalletButton />
-            {user ? (
-              <>
-                <span className="font-mono text-sm tabular-nums text-foreground">
-                  {(credits ?? 0).toLocaleString()}
-                  <span className="ml-1 text-muted">cr</span>
-                </span>
-                {/*
-                  The only way out, and it takes the wallet with it.
-
-                  There used to be a second one — "Disconnect", in the wallet
-                  menu — which left the account signed in with its credits
-                  on-chain and no wallet to reach them through: every control
-                  live, nothing workable, and no way to tell from the screen that
-                  the two exits meant different things. A player's wallet is how
-                  they play, so ending the session ends both.
-                */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    void disconnectWallet().catch(() => {});
-                    logout();
-                  }}
-                  className="text-xs text-muted hover:text-foreground"
-                >
-                  Log out
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setInviteOpen(true)}
-                className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white"
-              >
-                Enter invite code
-              </button>
-            )}
+            </IconButton>
           </div>
         </div>
+        <Rail groove />
       </header>
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-5">
@@ -442,52 +462,58 @@ function CrownInner() {
         ) : (
           <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
             <div className="flex min-w-0 flex-col gap-5">
-              <RoundBar round={round} credits={credits} />
               <VolumeChart
                 history={data?.cryptoRankHistory ?? []}
                 standings={field}
                 window={status?.window ?? "1h"}
               />
               {loading && !field.length ? (
-                <div className="rounded-lg border border-hairline bg-surface p-8 text-center text-sm text-muted">
+                <p className="px-2 py-8 text-center text-sm text-muted">
                   seeding the trailing-volume window…
-                </div>
+                </p>
               ) : (
                 <RankBoard
                   standings={field}
                   entries={entries}
                   selected={activeSymbol}
                   onSelect={onSelect}
-                  window={status?.window ?? "1h"}
                 />
               )}
             </div>
 
             <div className="flex min-w-0 flex-col gap-5">
               {/*
-                Hidden until there is something to do with it — see `charged`.
+                Always up for a visitor; withheld from an account with nothing
+                to spend — see `charged`.
 
-                A buy panel that cannot buy is worse than no buy panel: every
-                control in it is live, the stake chips add up, and the only thing
-                that says it will not work is a refusal on the button at the end.
-                Someone with no balance would compose a whole bet before the app
-                told them. Withholding it puts the wallet card directly under the
-                board instead, which is what they actually need next.
+                Those look like the same case and are opposites. A signed-in
+                player with no balance and no position has already been let in
+                and has nothing the panel can do for them: every control is
+                live, the stake chips add up, and the only thing that says it
+                will not work is a refusal on the key at the end. Withholding it
+                puts what they need next — the wallet — directly under the
+                board.
+
+                A signed-out visitor is the reverse. The prices are the product,
+                composing a bet is how they decide they want one, and the Buy key
+                is the door. Hiding the ticket hid the entire reason to sign in
+                behind having signed in.
               */}
-              {charged && (
+              {(!user || charged) && (
                 <BetPanel
                   standing={activeStanding}
                   entry={activeEntry}
                   bets={activeBets}
-                  bettable={bettable}
+                  roundOpen={open}
+                  signedIn={Boolean(user)}
                   disabledReason={disabledReason}
                   direction={direction}
                   onDirection={setDirection}
                   busy={busy}
                   credits={credits}
                   onPlace={onPlace}
-                  onClose={onClosePosition}
-                  closing={closing}
+                  onSell={onSellPosition}
+                  selling={selling}
                 />
               )}
               <BetFlow standing={activeStanding} entry={activeEntry} />
@@ -496,21 +522,16 @@ function CrownInner() {
                 status={error ? "error" : status?.status}
                 updatedAt={status?.updatedAt}
               />
-              <BotTape onSelect={onSelect} />
+              <Orders onSelect={onSelect} />
             </div>
           </div>
         )}
       </main>
 
-      <footer className="border-t border-hairline">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-6 py-4 text-xs text-muted">
-          <span>
-            Play money. Ranked by traded volume from tokens.xyz, refreshed about once
-            a minute. Not financial advice.
-          </span>
-          <a href="/" className="hover:text-foreground">← Utopian Contributors</a>
-        </div>
-      </footer>
+      {/* The bottom of the case. The footer that used to sit under it is gone;
+          its "play money" note lives in How it works, which is where someone
+          asking what the credits are will actually be looking. */}
+      <Rail groove className="mt-auto" />
 
       <PreviousRounds
         open={pastOpen}
@@ -535,19 +556,15 @@ function CrownInner() {
         onDismiss={() => setResult(null)}
       />
       <HowItWorks open={howOpen} onClose={() => setHowOpen(false)} />
-      <InviteDialog
-        open={inviteOpen}
-        onClose={() => setInviteOpen(false)}
-        onSubmit={login}
-      />
+      {picker}
 
       {toast && (
-        <div
+        <Panel
           role="status"
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 rounded-md border border-hairline bg-surface px-4 py-2 text-sm text-foreground shadow-lg"
+          className="casino-animate-in fixed bottom-6 left-1/2 z-40 -translate-x-1/2 px-4 py-2 text-sm text-foreground"
         >
           {toast}
-        </div>
+        </Panel>
       )}
     </div>
   );
