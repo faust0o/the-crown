@@ -261,8 +261,6 @@ async function main() {
   await writeEnv(`${repoRoot()}/.env`, {
     VITE_SOLANA_RPC_URL: "/rpc",
     VITE_SOLANA_CLUSTER: cluster,
-    VITE_CROWN_CREDIT_MINT: mint.toBase58(),
-    VITE_CROWN_RELAYER: relayer.publicKey.toBase58(),
   });
   await writeEnv(`${repoRoot()}/server/.env`, {
     SOLANA_RPC_URL: conn.rpcEndpoint,
