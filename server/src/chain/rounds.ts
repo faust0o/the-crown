@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 
-import { CUT_WINDOW_SECONDS, ROUND_MINUTES } from "../rounds";
+import { CUT_WINDOW_SECONDS, roundTimes } from "../rounds";
 import { probabilities } from "../crypto-odds";
 import { BOARD_SIZE, oracle, type Standing } from "../oracle/index";
 import { CAP_CENTS, FLOOR_CENTS } from "./pricing";
@@ -292,8 +292,7 @@ export async function openChainRound(opts: {
   const round = roundPda(index);
 
   const seed = Buffer.from(opts.seedHex, "hex");
-  const lockAt = new Date(opts.startsAt.getTime() + ROUND_MINUTES * 60_000 - CUT_WINDOW_SECONDS * 1000);
-  const endsAt = new Date(opts.startsAt.getTime() + ROUND_MINUTES * 60_000);
+  const { lockAt, endsAt } = roundTimes(opts.startsAt);
 
   await program.methods
     .openRound({

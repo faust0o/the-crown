@@ -9,17 +9,34 @@ import { oracle, BOARD_SIZE, type Standing } from "./oracle/index";
  * waiting — but note a change only takes effect once the in-flight round ends.
  */
 export const ROUND_MINUTES = Number(process.env.ROUND_MINUTES ?? 30);
-/** Betting closes this long before the round ends; the cut lands inside it. */
+/** Betting closes when this window opens; the cut lands inside it. */
 export const CUT_WINDOW_SECONDS = Number(process.env.CUT_WINDOW_SECONDS ?? 60);
+/**
+ * The end of every round, after the cut window has closed, kept for recording
+ * the cut and paying the round out.
+ *
+ * The cut window used to run right up to the round's end, so a cut late in it
+ * was recorded after the next round had opened — and that round, which takes
+ * its crown from this one's cut, crowned the coin this one had just beaten.
+ * Holding the window back by this much means the result is in, and paid, by
+ * the time the next round opens on its boundary.
+ */
+export const POST_ROUND_SECONDS = Number(process.env.POST_ROUND_SECONDS ?? 30);
 
 const ROUND_MS = ROUND_MINUTES * 60_000;
 const CUT_MS = CUT_WINDOW_SECONDS * 1_000;
+const POST_MS = POST_ROUND_SECONDS * 1_000;
 
 /**
- * How long a cut may wait, past its committed instant, for a live reading of
- * the market taken at or after that instant. Past this the round is refunded.
+ * When a round starting at `startsAt` stops taking bets, and when it ends.
+ *
+ * Shared with the chain, whose copy of the round has to close betting at the
+ * same instant and derive its cut from the same `lockAt`.
  */
-export const CUT_GRACE_MS = Number(process.env.CUT_GRACE_SECONDS ?? 120) * 1_000;
+export function roundTimes(startsAt: Date): { lockAt: Date; endsAt: Date } {
+  const endsAt = new Date(startsAt.getTime() + ROUND_MS);
+  return { lockAt: new Date(endsAt.getTime() - POST_MS - CUT_MS), endsAt };
+}
 
 /**
  * What a round whose cut is due should do with the board the oracle holds.
@@ -36,18 +53,25 @@ export const CUT_GRACE_MS = Number(process.env.CUT_GRACE_SECONDS ?? 120) * 1_000
  * reading that settles a round is normally the first or second one after its
  * instant.
  *
- * **Void** once it has had `CUT_GRACE_MS` to arrive and has not. The round is
- * cut with no ranks at all, which settlement already refunds: a round decided
- * by nobody is better paid back than decided by a stale guess.
+ * **Void** once the round has ended without one. The round is cut with no
+ * ranks at all, which settlement already refunds: a round decided by nobody is
+ * better paid back than decided by a stale guess. The deadline is the round's
+ * end rather than a grace counted from the cut, because the next round opens
+ * then and its crown is this cut's result — a cut still pending at the
+ * boundary would hold the next round back or crown the wrong coin. It is never
+ * less than `POST_ROUND_SECONDS` after the cut, which on this schedule is the
+ * same thing; it matters only to a round opened before the window was held
+ * back, whose cut can land at its very end.
  */
 export function cutDecision(
   now: number,
   cutAt: number,
+  endsAt: number,
   feed: { live: boolean; describes: number }
 ): "record" | "wait" | "void" {
   if (now < cutAt) return "wait";
   if (feed.live && feed.describes >= cutAt) return "record";
-  return now - cutAt >= CUT_GRACE_MS ? "void" : "wait";
+  return now >= Math.max(endsAt, cutAt + POST_MS) ? "void" : "wait";
 }
 
 /** Rounds start on wall-clock boundaries so the schedule is predictable. */
@@ -104,10 +128,12 @@ export async function reigningCrown(): Promise<string | null> {
  * from the round before last — so the coin that had just been beaten wore it
  * for a whole round, and the coin that beat it was on the board with a book.
  *
- * Not decided while the previous round is still waiting on its cut. The wait is
- * bounded: `cutDecision` records or voids a cut within `CUT_GRACE_MS` of an
- * instant no later than the round's end. A round with no seed is the exception —
- * `tickRounds` never cuts one, so waiting on it would wait forever.
+ * Not decided while the previous round is still waiting on its cut. On
+ * schedule that never happens — `cutDecision` records or voids every cut by
+ * its round's end, and the round loop ticks the rounds before it opens the next
+ * — so this is what stops a wrong crown when something else has gone wrong, a
+ * tick that threw, say. A round with no seed is the exception: `tickRounds`
+ * never cuts one, so waiting on it would wait forever.
  */
 export function crownDecided(
   previous: { status: "OPEN" | "LOCKED" | "CUT" | "SETTLED"; seed: string | null } | null
@@ -198,8 +224,7 @@ export async function currentRound() {
 
   const crownSymbol = await reigningCrown();
   const seed = randomBytes(32).toString("hex");
-  const lockAt = new Date(startsAt.getTime() + ROUND_MS - CUT_MS);
-  const endsAt = new Date(startsAt.getTime() + ROUND_MS);
+  const { lockAt, endsAt } = roundTimes(startsAt);
 
   try {
     const opened = await prisma.round.create({
@@ -275,22 +300,26 @@ export async function tickRounds(): Promise<void> {
         round.lockAt.getTime() +
           cutOffsetMs(round.seed, round.id, round.cutWindowSeconds * 1000)
       );
-      const decision = cutDecision(now.getTime(), cutAt.getTime(), {
+      const decision = cutDecision(now.getTime(), cutAt.getTime(), round.endsAt.getTime(), {
         live: oracle.isLive(),
         describes: oracle.updatedAt,
       });
       if (decision === "wait") continue;
       if (decision === "void") {
         console.warn(
-          `⚠  round ${round.id}: no live reading of the market within ` +
-            `${CUT_GRACE_MS / 1000}s of its cut — every bet on it is refunded`
+          `⚠  round ${round.id}: no live reading of the market between its cut ` +
+            `and its end — every bet on it is refunded`
         );
       }
       await recordCut(round.id, cutAt, decision === "record" ? oracle.standings(BOARD_SIZE) : null);
       round.status = "CUT";
     }
 
-    if (round.status === "CUT" && now >= round.endsAt) {
+    // Paid as soon as it is cut, inside the post-round window, rather than at
+    // the boundary: the round has been closed to bets and sales since it locked,
+    // so there is nothing left to wait for, and paying at the boundary put the
+    // biggest write of the round in front of the next round's open.
+    if (round.status === "CUT") {
       await settleRound(round.id);
     }
   }
@@ -466,10 +495,17 @@ let timer: ReturnType<typeof setInterval> | null = null;
 /** Drive the round lifecycle. 1s cadence so the cut lands within a second of true. */
 export function startRoundLoop(): void {
   if (timer) return;
+  const warn = (err: unknown) =>
+    console.warn("⚠  round loop:", err instanceof Error ? err.message : err);
+  // The rounds first, then the next one: on the boundary tick the round that
+  // has just ended is cut or refunded before its successor opens and asks it
+  // for the crown. A failed tick does not stop the open — `crownDecided` holds
+  // that back by itself if the cut is what failed.
   const run = () => {
-    void currentRound()
-      .then(() => tickRounds())
-      .catch((err) => console.warn("⚠  round loop:", err?.message ?? err));
+    void tickRounds()
+      .catch(warn)
+      .then(() => currentRound())
+      .catch(warn);
   };
   timer = setInterval(run, 1_000);
   run();

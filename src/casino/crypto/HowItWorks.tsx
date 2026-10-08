@@ -16,7 +16,7 @@ const STEPS = [
   },
   {
     title: "The finish is a surprise",
-    body: "The round stops at a random moment in its last minute, so nobody can game the ending.",
+    body: "The round stops at a random moment near its end, so nobody can game the ending.",
   },
 ];
 

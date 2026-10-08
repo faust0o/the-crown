@@ -111,16 +111,18 @@ enum RankDirection {
 
 /// One hour of competition.
 ///
-/// The settlement instant ("the cut") is a random point inside the final
-/// minute, so a pump timed at a known deadline can't decide the outcome. It is
-/// committed up front: `commitHash` = sha256(seed) is published when the round
-/// opens, `seed` is revealed at settlement, and cutAt is derived from the seed,
-/// so anyone can verify the house didn't pick a convenient moment.
+/// The settlement instant ("the cut") is a random point inside the cut window,
+/// which closes 30 seconds before the round ends (`POST_ROUND_SECONDS`, kept for
+/// recording and paying it), so a pump timed at a known deadline can't decide
+/// the outcome. It is committed up front: `commitHash` = sha256(seed) is
+/// published when the round opens, `seed` is revealed at settlement, and cutAt
+/// is derived from the seed, so anyone can verify the house didn't pick a
+/// convenient moment.
 model Round {
   id               String      @id @default(cuid())
   startsAt         DateTime    @unique
   lockAt           DateTime // betting closes
-  endsAt           DateTime // lockAt + the cut window
+  endsAt           DateTime // lockAt + the cut window + the post-round window
   commitHash       String // sha256(seed), published at open
   seed             String? // revealed at settlement
   cutAt            DateTime? // derived from seed; set when the cut lands

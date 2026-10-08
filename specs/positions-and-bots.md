@@ -41,7 +41,9 @@ has never played gets an account the first time it signs one. There is no demo
 bypass.
 
 Rounds are 30 minutes (wall-clock aligned, so they open on the hour and
-half hour) with the cut in the final minute. Use short rounds to see settlement
+half hour). Betting closes at 28:30, the cut lands at a random instant before
+29:30, and the last 30 seconds (`POST_ROUND_SECONDS`) record the cut and pay the
+round out before the next one opens. Use short rounds to see settlement
 without waiting:
 `ROUND_MINUTES=2 CUT_WINDOW_SECONDS=20`. **Important:** round length only applies
 to newly-opened rounds — an in-flight round must end (or be retired in the DB)
