@@ -103,6 +103,41 @@ somewhere other than `<repo>/dist`.
 The on-chain half is off by default and is its own document:
 [`docs/deploy-chain.md`](docs/deploy-chain.md).
 
+## The livestream
+
+`/live` is a password-protected studio that broadcasts the race to any number
+of RTMP destinations — YouTube, Twitch, Kick, X — with uploaded MP3s looping
+underneath. When a round's cut lands, the chart fades out and the winner is
+shown taking the crown, then the chart comes back.
+
+Set `LIVE_PASSWORD` to switch it on; unset, every `/api/live` route is a 404.
+The server needs ffmpeg, which Railpack installs from
+`RAILPACK_DEPLOY_APT_PACKAGES=ffmpeg` (already in `.railway/railway.ts`).
+
+```
+browser tab (/live)                         server                         platforms
+canvas 1280×720 ─┐                    ┌─ encoder ffmpeg ─┬─ pusher ffmpeg ─► rtmp://…/key
+music (WebAudio) ┴─ MediaRecorder ─ws─┤  WebM → H.264/AAC│─ pusher ffmpeg ─► rtmps://…/key
+                    (WebM, 0.5 s)     └─  as MPEG-TS     └─ …one per destination
+```
+
+The page *is* the broadcaster: it draws the scene (`src/live/scene.ts`) onto a
+canvas, records it with the music, and streams the recording up a WebSocket.
+The server encodes once and copies the result to each destination in its own
+process, so one destination dropping, being added or being switched off never
+interrupts the others, and a dropped one reconnects on a backoff
+(`server/src/live/broadcast.ts`). Two things follow from that design:
+
+- **The stream runs while the tab is open.** Keep it on a machine that stays
+  up, in a window that stays visible: a hidden tab keeps broadcasting, but
+  liveline only animates the chart while the tab is on screen.
+- **Stream keys never come back to the browser.** They are written to the
+  volume (`LIVE_DIR`, mode 0600) and redacted out of ffmpeg's error lines.
+
+Destinations and music live on the volume beside the token logos, not in
+Postgres. Uploads go up in 2 MB parts, because the server gives any one
+request 30 seconds to arrive.
+
 ## How requests are defended
 
 Four layers, each answering a question the others can't.

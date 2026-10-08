@@ -15,9 +15,18 @@ import {
   IS_PRODUCTION,
   PORT,
 } from "./env";
-import { graphqlLimiter, logoLimiter, securityHeaders, serveHealth, trustProxy } from "./http";
+import {
+  graphqlLimiter,
+  liveLoginLimiter,
+  logoLimiter,
+  securityHeaders,
+  serveHealth,
+  trustProxy,
+} from "./http";
 import { mountRpcProxy } from "./chain/rpc-proxy";
 import { startChain, stopChain } from "./chain/runner";
+import { LIVE_ENABLED } from "./live/config";
+import { mountLive, stopLive } from "./live/routes";
 import { serveLogos } from "./logo-store";
 import { oracle } from "./oracle/index";
 import { prisma } from "./prisma";
@@ -150,6 +159,9 @@ async function main() {
   );
 
   serveLogos(app, logoLimiter);
+  // The livestream's API and ingest socket. Before the SPA, for the same reason
+  // as /rpc: an unmatched /api/live path must not come back as index.html.
+  mountLive(app, httpServer, liveLoginLimiter);
   serveClient(app);
 
   // A connection that opens and then dribbles bytes holds a socket for as long
@@ -178,9 +190,12 @@ async function main() {
     oracle.stop();
     // Don't let a held-open keep-alive connection outlast the signal.
     setTimeout(() => process.exit(0), 5_000).unref();
-    httpServer.close(() => {
-      void prisma.$disconnect().finally(() => process.exit(0));
-    });
+    // Ends the broadcast and its ffmpegs, which would otherwise outlive us.
+    void stopLive().finally(() =>
+      httpServer.close(() => {
+        void prisma.$disconnect().finally(() => process.exit(0));
+      })
+    );
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
@@ -219,6 +234,7 @@ async function main() {
       ].join("\n")
     );
   }
+  if (LIVE_ENABLED) console.log(`📺  Livestream studio at /live`);
   if (IS_PRODUCTION && !CORS_ORIGINS.length) {
     console.log("ℹ  CORS_ORIGINS unset — /graphql accepts same-origin calls only.");
   }

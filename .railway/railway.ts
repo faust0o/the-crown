@@ -31,12 +31,16 @@ export default defineRailway(() => {
     networking: { privateNetworkEndpoint: "marvelous-achievement" },
     volumeMounts: { "/data": serverData },
     env: {
+      // ffmpeg for the livestream (server/src/live). Railpack installs it into
+      // the image; without it /live cannot go on air and nothing else notices.
+      RAILPACK_DEPLOY_APT_PACKAGES: "ffmpeg",
       CHAIN_MODE: preserve(),
       CORS_ORIGINS: preserve(),
       CROWN_AUTHORITY_KEY: preserve(),
       CROWN_CREDIT_MINT: preserve(),
       CROWN_RELAYER_KEY: preserve(),
       DATABASE_URL: preserve(),
+      LIVE_PASSWORD: preserve(),
       PORT: preserve(),
       SOLANA_RPC_URL: preserve(),
       TEST: preserve(),

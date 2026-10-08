@@ -101,6 +101,8 @@ const limiter = (windowMs: number, max: number) =>
 
 export const graphqlLimiter = limiter(60_000, 600);
 export const logoLimiter = limiter(60_000, 120);
+/** /live has one password and no accounts, so guessing it is all there is to slow down. */
+export const liveLoginLimiter = limiter(15 * 60_000, 10);
 
 /**
  * Liveness for the platform's health check.
