@@ -1,9 +1,8 @@
-import type { LivelinePoint, LivelineSeries } from "liveline";
 import { Liveline } from "liveline";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useColorScheme } from "../theme";
-import { lineIcon } from "./lineIcon";
 import { proxied } from "./proxied";
+import { raceSeries } from "./race";
 import { fallbackColor, legibleOn, useIconColors } from "./useIconColors";
 
 import { Section } from "../ui";
@@ -87,64 +86,24 @@ export function VolumeChart({
     });
   }, []);
 
-  const { primary, series, value, spanSecs } = useMemo(() => {
-    // Total the field per timestamp first, so each point is a share of that
-    // instant rather than of some fixed denominator.
-    const totalAt = new Map<number, number>();
-    for (const p of history) totalAt.set(p.t, (totalAt.get(p.t) ?? 0) + p.quoteVolume);
-
-    const bySymbol = new Map<string, LivelinePoint[]>();
-    for (const p of history) {
-      if (!bySymbol.has(p.symbol)) bySymbol.set(p.symbol, []);
-      const total = totalAt.get(p.t) ?? 0;
-      bySymbol.get(p.symbol)!.push({
-        // liveline's time axis is in seconds.
-        time: Math.round((p.t + shift) / 1000),
-        value: total > 0 ? (100 * p.quoteVolume) / total : 0,
-      });
-    }
-    const liveTotal = standings.reduce((n, s) => n + s.quoteVolume, 0);
-
-    // Ordered by volume, matching the board. Reordering is safe now that a
-    // token's colour comes from its symbol rather than its position — that
-    // index-keyed palette was what made lines swap colours and appear to lurch
-    // whenever the ranking changed.
-    const ordered = standings.filter((s) => bySymbol.has(s.symbol));
-
-    const built: LivelineSeries[] = ordered.map((s) => ({
-      id: s.symbol,
-      // Hidden series stay in the array so they keep their legend entry and
-      // their place in the volume ordering; they just draw nothing.
-      data: hidden.has(s.symbol) ? [] : (bySymbol.get(s.symbol) ?? []),
-      value: liveTotal > 0 ? (100 * s.quoteVolume) / liveTotal : 0,
-      // The line takes the logo's own colour, so a series is identifiable
-      // against the row it belongs to rather than by legend order — lightened
-      // when that colour is too dark to see on the dark theme.
-      color: legibleOn(scheme, iconColors.get(proxied(s.imageUrl) ?? "") ?? fallbackColor(s.symbol)),
-      // Still feeds the scrub tooltip and the legend.
-      label: s.ticker,
-      // Drawn at the line's end in place of the ticker. liveline reserves room
-      // there for its widest label, so text tickers resized the plot — and
-      // shifted every line — whenever the field changed. Icons are all one width.
-      icon: lineIcon(s.symbol, s.ticker, proxied(s.imageUrl)),
-    }));
-
-    const lead = built.find((b) => b.data.length) ?? built[0];
-    // liveline crops to `window` seconds. Size it to the data we actually hold,
-    // never to wall-clock time since the round opened — doing that left an empty
-    // region wherever the round predates our recording, which reads as a broken
-    // chart. Matching the window to the data keeps the line spanning the
-    // container edge to edge, always continuous.
-    const times = history.map((p) => p.t + shift);
-    const now = replay ? openedAt : Date.now();
-    const spanMs = times.length ? now - Math.min(...times) : 0;
-    return {
-      primary: lead?.data ?? [],
-      series: built,
-      value: lead?.value ?? 0,
-      spanSecs: Math.max(60, Math.ceil(spanMs / 1000)),
-    };
-  }, [history, standings, iconColors, hidden, shift, scheme, replay, openedAt]);
+  const { primary, series, value, spanSecs } = useMemo(
+    () =>
+      raceSeries({
+        history,
+        standings,
+        // Hidden series stay in the array so they keep their legend entry and
+        // their place in the volume ordering; they just draw nothing.
+        hidden,
+        shift,
+        now: replay ? openedAt : Date.now(),
+        // The line takes the logo's own colour, so a series is identifiable
+        // against the row it belongs to rather than by legend order — lightened
+        // when that colour is too dark to see on the dark theme.
+        colorOf: (s) =>
+          legibleOn(scheme, iconColors.get(proxied(s.imageUrl) ?? "") ?? fallbackColor(s.symbol)),
+      }),
+    [history, standings, iconColors, hidden, shift, scheme, replay, openedAt]
+  );
 
   return (
     <Section title={title}>
