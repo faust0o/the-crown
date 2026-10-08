@@ -387,6 +387,7 @@ function CrownInner() {
     [bettable]
   );
 
+  /** Place the ticket. Resolves true only if the bet went through. */
   const onPlace = useCallback(
     async (stake: number) => {
       // No account yet: the key is a door. `promptSignIn` puts the wallet
@@ -395,16 +396,18 @@ function CrownInner() {
       // — so the tap did nothing visible at all.
       if (!user) {
         promptSignIn();
-        return;
+        return false;
       }
-      if (!activeSymbol) return;
+      if (!activeSymbol) return false;
       setBusy(true);
       try {
         await placeBet({ variables: { symbol: activeSymbol, direction, stake } });
         await refetch();
+        return true;
       } catch (err) {
         setToast(err instanceof Error ? err.message : "Could not place that bet.");
         setTimeout(() => setToast(null), 4000);
+        return false;
       } finally {
         setBusy(false);
       }

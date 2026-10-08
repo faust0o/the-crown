@@ -95,7 +95,8 @@ export function BetPanel({
   onDirection: (d: Direction) => void;
   busy: boolean;
   credits: number | null;
-  onPlace: (stake: number) => void;
+  /** Resolves true once the bet is placed — not on a sign-in prompt or a failure. */
+  onPlace: (stake: number) => Promise<boolean>;
   /** Sell part or all of one line's position. */
   onSell: (direction: Direction, stake: number) => void;
   selling: boolean;
@@ -206,14 +207,16 @@ export function BetPanel({
     signedIn && roundOpen && !selling && amount > 0 && position > 0 && sale != null;
   const ready = isBuy ? canPlace : canSell;
 
-  /** Why the key is dark. Never a guess: the round, the balance, the book, in that order. */
+  /** Why the key is dark. Never a guess: the round, the amount, the balance, the book, in that order. */
   const refusal = isBuy
     ? crowned
       ? "The reigning coin can't be bet on."
       : (disabledReason ??
-        (signedIn && (credits ?? 0) < amount
-          ? "Not enough balance."
-          : "Unavailable for this coin."))
+        (amount <= 0
+          ? "Enter an amount."
+          : signedIn && (credits ?? 0) < amount
+            ? "Not enough balance."
+            : "Unavailable for this coin."))
     : !signedIn
       ? "Sign in to see what you're holding."
       : position === 0
@@ -413,7 +416,12 @@ export function BetPanel({
           onClick={() => {
             if (isBuy) {
               setSide("buy");
-              onPlace(amount);
+              // Cleared once the bet is in, so the next tap can't buy the same
+              // stake again by accident. Kept on a failure or a sign-in prompt,
+              // and kept if they started typing the next one while it placed.
+              void onPlace(amount).then((placed) => {
+                if (placed) setStake((s) => (s === amount ? 0 : s));
+              });
             } else {
               onSell(sellDirection, amount);
               setSellInput(null);
