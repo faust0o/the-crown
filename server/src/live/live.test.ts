@@ -230,6 +230,8 @@ describe("ffmpeg", () => {
     });
     const after = (flag: string, from = 0) => args[args.indexOf(flag, from) + 1];
     assert.equal(after("-f"), "rawvideo");
+    // Raw inputs are not probed: waiting to analyse the sound stalled the encoder.
+    assert.equal(args.filter((a) => a === "-analyzeduration").length, 2);
     assert.equal(after("-s"), "1280x720");
     assert.equal(after("-i"), "pipe:0");
     assert.equal(after("-i", args.indexOf("pipe:0")), "pipe:3");

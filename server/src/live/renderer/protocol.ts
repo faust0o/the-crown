@@ -23,6 +23,8 @@ export interface RendererStatus extends BroadcastStatus {
   boardAt: number;
   /** Milliseconds one frame takes to paint. */
   paintMs: number;
+  /** Frames let go because painting or the encoder fell behind. */
+  dropped: number;
 }
 
 export type FromRenderer =

@@ -17,6 +17,8 @@ import { LiveInputError, liveStore } from "./store";
 
 const ENTRY = fileURLToPath(new URL("./renderer/main.ts", import.meta.url));
 const RETRY_MS = [2_000, 5_000, 10_000, 30_000];
+/** How often a running stream reports itself in the server log. */
+const HEALTH_MS = 60_000;
 /** Up this long, and the next crash starts the backoff over. */
 const STABLE_MS = 60_000;
 
@@ -41,10 +43,17 @@ class Director {
   private attempt = 0;
   private retry: NodeJS.Timeout | null = null;
   private spawnedAt = 0;
+  private health: NodeJS.Timeout | null = null;
 
   /** At startup: back on air if that is where the last process left it. */
   async boot(): Promise<void> {
     if (!(await liveStore.settings()).onAir) return;
+    if (!(await ffmpegAvailable())) {
+      this.error = "ffmpeg isn't installed on the server — set RAILPACK_DEPLOY_APT_PACKAGES=ffmpeg.";
+      console.warn(`⚠  livestream: was on air, but cannot resume: ${this.error}`);
+      this.wanted = true;
+      return;
+    }
     console.log("📺  livestream: resuming — it was on air when the server stopped");
     this.wanted = true;
     await this.spawn();
@@ -145,6 +154,7 @@ class Director {
       else if (m.type === "status") {
         this.status = m.status;
         if (m.status.state === "failed" && m.status.error) this.error = m.status.error;
+        else if (m.status.state === "live") this.error = null;
       } else if (m.type === "preview") this.preview = Buffer.from(m.jpeg);
     });
     child.on("error", (err) => {
@@ -153,14 +163,30 @@ class Director {
     child.on("exit", (code, signal) => {
       if (this.child !== child) return;
       this.child = null;
+      if (this.health) clearInterval(this.health);
+      this.health = null;
       if (!this.wanted) return;
       if (code !== 0) this.error ??= `The renderer stopped (${signal ?? `exit ${code}`}).`;
       if (Date.now() - this.spawnedAt > STABLE_MS) this.attempt = 0;
       const wait = RETRY_MS[Math.min(this.attempt, RETRY_MS.length - 1)];
       this.attempt++;
-      console.warn(`⚠  livestream: renderer stopped (${signal ?? code}); restarting in ${wait / 1000}s`);
+      console.warn(
+        `⚠  livestream: renderer stopped (${signal ?? `exit ${code}`}): ${this.error ?? "no reason given"}; restarting in ${wait / 1000}s`
+      );
       this.retry = setTimeout(() => void this.spawn(), wait);
     });
+
+    // A line a minute while on air, so the server log says how the stream is
+    // doing without anybody having the studio open.
+    this.health = setInterval(() => {
+      const s = this.status;
+      if (!s) return;
+      const where = s.destinations.map((d) => `${d.label} ${d.state}${d.error ? ` (${d.error})` : ""}`).join(", ") || "no destinations";
+      console.log(
+        `📺  livestream: ${s.state} · ${s.fps ?? "?"} fps · ${s.speed ?? "?"}× · ${s.dropped} dropped · ${where}`
+      );
+    }, HEALTH_MS);
+    this.health.unref();
   }
 
   private async halt(): Promise<void> {

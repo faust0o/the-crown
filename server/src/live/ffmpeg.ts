@@ -42,12 +42,22 @@ export function encoderArgs(o: EncodeOptions): string[] {
     "-loglevel", "warning",
     "-nostats",
     "-progress", "pipe:4",
+    // Both inputs are raw with every parameter given, so there is nothing to
+    // probe — and probing is not harmless here. ffmpeg opens its inputs one
+    // after another, and left to analyse the sound it waited for seconds of
+    // it before reading any picture; the renderer, whose frames were piling
+    // up unread, either gave up on the broadcast or (with backpressure) stopped
+    // sending the sound the probe was waiting for.
+    "-probesize", "32",
+    "-analyzeduration", "0",
     "-f", "rawvideo",
     "-pix_fmt", "rgba",
     "-s", `${o.width}x${o.height}`,
     "-framerate", String(o.fps),
     "-thread_queue_size", "64",
     "-i", "pipe:0",
+    "-probesize", "32",
+    "-analyzeduration", "0",
     "-f", "s16le",
     "-ar", String(o.sampleRate),
     "-ac", String(o.channels),

@@ -20,15 +20,19 @@ import { HEIGHT, Scene, WIDTH } from "./scene";
  * the game. The director restarts it if it dies.
  *
  * One clock drives everything: every 1/30 s it paints a frame and writes it,
- * with exactly 1/30 s of music, to the encoder. If painting ever falls behind,
- * the last frame is written again so the stream keeps its pace; sound is never
- * skipped or doubled, so the two stay together.
+ * with exactly 1/30 s of music, to the encoder. Picture and sound always travel
+ * together — a frame that cannot be written is let go with its sound — so the
+ * two stay in step however the timing goes. If painting falls a frame or two
+ * behind, the last frame is written again to keep the pace; further behind,
+ * or with the encoder backed up, frames are skipped rather than piled up.
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FRAME_MS = 1000 / STREAM.fps;
 const SOUND_BYTES = (STREAM.sampleRate / STREAM.fps) * STREAM.channels * 2;
 const PREVIEW_MS = 1_000;
+/** Duplicates written to catch up after a slow frame; past this, skip ahead. */
+const MAX_CATCH_UP = 3;
 
 const send = (message: FromRenderer) => process.send?.(message);
 
@@ -43,6 +47,7 @@ const mixer = new Mixer();
 let broadcast: Broadcast | null = null;
 let stopping = false;
 let paintMs = 0;
+let dropped = 0;
 
 function status(): RendererStatus | null {
   if (!broadcast) return null;
@@ -51,6 +56,7 @@ function status(): RendererStatus | null {
     nowPlaying: mixer.current?.name ?? null,
     boardAt: board.updatedAt,
     paintMs: Math.round(paintMs * 10) / 10,
+    dropped,
   };
 }
 
@@ -77,6 +83,11 @@ function start(m: Extract<ToRenderer, { type: "start" }>): void {
     if (s) send({ type: "status", status: s });
   }, 1_000).unref();
 
+  // The clock starts once the first frame exists. The first paint is the slow
+  // one — fonts, the first logos, a cold JIT — and starting the clock before it
+  // used to leave a second of frames owed, written all at once into an encoder
+  // that had not started, which then gave up on the broadcast.
+  scene.paint(ctx, board.race, board.crowning, Date.now(), performance.now());
   const t0 = performance.now();
   let written = 0;
   let lastPreview = 0;
@@ -84,10 +95,16 @@ function start(m: Extract<ToRenderer, { type: "start" }>): void {
     if (stopping || !broadcast) return;
     const now = performance.now();
     let due = Math.floor((now - t0) / FRAME_MS) + 1;
-    // Seconds behind — the process was starved. Let the time go rather than
-    // burst it all into the encoder at once.
-    if (due - written > STREAM.fps * 2) written = due - 1;
-    if (written < due) {
+    if (due - written > MAX_CATCH_UP) {
+      dropped += due - written - 1;
+      written = due - 1;
+    }
+    if (written < due && broadcast.backlogged()) {
+      // The encoder is behind. Not even painted: on a starved machine the
+      // paint is what the encoder needs the time for.
+      dropped += due - written;
+      written = due;
+    } else if (written < due) {
       const began = performance.now();
       scene.paint(ctx, board.race, board.crowning, Date.now(), now);
       const picture = canvas.data();

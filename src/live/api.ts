@@ -44,6 +44,8 @@ export interface BroadcastStatus {
   boardAt: number;
   /** Milliseconds one frame takes to paint. */
   paintMs: number;
+  /** Frames let go because the server fell behind. */
+  dropped: number;
 }
 
 export interface StudioState {

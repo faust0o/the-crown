@@ -166,6 +166,12 @@ export function Studio({ onSignedOut }: { onSignedOut: () => void }) {
                     x264 preset (<code>LIVE_X264_PRESET=superfast</code>) or more CPU will fix it.
                   </Hint>
                 )}
+                {running && status && status.dropped > 30 && (
+                  <Hint tone="down">
+                    {status.dropped.toLocaleString()} frames dropped since going live — the server
+                    fell behind, and let them go rather than fall further behind.
+                  </Hint>
+                )}
                 <Hint>
                   The stream runs on the server. Close this page whenever you like: it keeps
                   broadcasting, and comes back by itself after a deploy, until somebody presses Stop.

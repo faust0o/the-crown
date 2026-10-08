@@ -38,12 +38,17 @@ export interface BroadcastStatus {
 }
 
 /**
- * How much unread input a process may build up before it is cut off. An
- * encoder some seventy raw frames behind (2.3 s) will never catch up; a pusher
+ * How much unread input a process may build up. Past the soft limit — about
+ * eight raw frames — the renderer stops handing the encoder frames and lets
+ * them go instead (see `backlogged`), so a slow moment costs a few frames
+ * rather than the broadcast. The hard limit should never be reached; a pusher
  * that far behind has a destination that has stopped reading, and holding its
  * backlog would be holding the whole broadcast's memory for one dead socket.
  */
+const ENCODER_SOFT_BACKLOG = 32 * 1024 * 1024;
 const ENCODER_BACKLOG = 256 * 1024 * 1024;
+/** An encoder that has produced nothing for this long has hung. */
+const STALL_MS = 30_000;
 const PUSHER_BACKLOG = 16 * 1024 * 1024;
 const RETRY_MS = [2_000, 5_000, 10_000, 30_000];
 /** Live this long, and a destination's next drop starts the backoff over. */
@@ -198,6 +203,9 @@ export class Broadcast extends EventEmitter {
   private cause: string | null = null;
   private ending: Promise<void> | null = null;
   private pending: NodeJS.Timeout | null = null;
+  private progressAt = Date.now();
+  private lastOutMs = -1;
+  private readonly watchdog: NodeJS.Timeout;
 
   constructor(destinations: Destination[], options: EncodeOptions = STREAM) {
     super();
@@ -217,6 +225,11 @@ export class Broadcast extends EventEmitter {
       const reports = progress.push(chunk);
       if (!reports.length) return;
       this.stats = reports[reports.length - 1];
+      const outMs = this.stats.outTimeMs ?? -1;
+      if (outMs > this.lastOutMs) {
+        this.lastOutMs = outMs;
+        this.progressAt = Date.now();
+      }
       this.notify();
     });
     this.encoder.stderr!.setEncoding("utf8").on("data", (chunk: string) => keepTail(this.lines, chunk));
@@ -229,11 +242,27 @@ export class Broadcast extends EventEmitter {
       }
     });
 
+    this.watchdog = setInterval(() => {
+      if (this.running && Date.now() - this.progressAt > STALL_MS) {
+        this.fail(`The encoder has made no progress for ${STALL_MS / 1000}s.`);
+      }
+    }, 5_000);
+    this.watchdog.unref();
+
     this.sync(destinations);
   }
 
   private get running(): boolean {
     return this.state === "starting" || this.state === "live";
+  }
+
+  /**
+   * Whether the encoder is behind. The renderer asks before every frame and
+   * lets the frame go — picture and sound together, so they stay in step —
+   * rather than pile up memory the encoder may never get through.
+   */
+  backlogged(): boolean {
+    return (this.encoder.stdin?.writableLength ?? 0) > ENCODER_SOFT_BACKLOG;
   }
 
   /** One frame: its picture (RGBA) and the sound that plays under it (s16le). */
@@ -286,6 +315,7 @@ export class Broadcast extends EventEmitter {
   }
 
   private async finish(abort: boolean): Promise<void> {
+    clearInterval(this.watchdog);
     this.notify(true);
     if (abort) this.encoder.kill("SIGKILL");
     else {
