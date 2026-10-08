@@ -38,10 +38,23 @@ export interface Track {
   addedAt: string;
 }
 
+/**
+ * Whether the stream should be on air, kept on disk so that a deploy, a crash
+ * or a restart brings it back by itself — it runs until somebody presses Stop.
+ */
+export interface Settings {
+  onAir: boolean;
+  /** The music's level under the stream, 0–1. */
+  volume: number;
+}
+
 interface Saved {
   destinations: Destination[];
   tracks: Track[];
+  settings: Settings;
 }
+
+const DEFAULT_SETTINGS: Settings = { onAir: false, volume: 0.8 };
 
 export const MAX_DESTINATIONS = 10;
 export const MAX_TRACKS = 50;
@@ -189,12 +202,13 @@ export class LiveStore {
 
   private async load(): Promise<Saved> {
     if (this.state) return this.state;
-    let saved: Saved = { destinations: [], tracks: [] };
+    let saved: Saved = { destinations: [], tracks: [], settings: { ...DEFAULT_SETTINGS } };
     try {
       const parsed = JSON.parse(await readFile(this.configFile, "utf8")) as Partial<Saved>;
       saved = {
         destinations: Array.isArray(parsed.destinations) ? parsed.destinations : [],
         tracks: Array.isArray(parsed.tracks) ? parsed.tracks : [],
+        settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
       };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -278,6 +292,26 @@ export class LiveStore {
 
   async tracks(): Promise<Track[]> {
     return [...(await this.load()).tracks];
+  }
+
+  /** The playlist as the renderer plays it: each track with the file it is in. */
+  async playlist(): Promise<{ id: string; name: string; file: string }[]> {
+    return (await this.load()).tracks.map((t) => ({ id: t.id, name: t.name, file: join(this.trackDir, `${t.id}.mp3`) }));
+  }
+
+  async settings(): Promise<Settings> {
+    return { ...(await this.load()).settings };
+  }
+
+  async updateSettings(patch: { onAir?: unknown; volume?: unknown }): Promise<Settings> {
+    if (patch.volume !== undefined && (typeof patch.volume !== "number" || !(patch.volume >= 0 && patch.volume <= 1))) {
+      throw new LiveInputError("The volume is a number from 0 to 1.");
+    }
+    return this.mutate((saved) => {
+      if (typeof patch.onAir === "boolean") saved.settings.onAir = patch.onAir;
+      if (typeof patch.volume === "number") saved.settings.volume = patch.volume;
+      return { ...saved.settings };
+    });
   }
 
   /** The file a track is stored in, or null for an id we never issued. */

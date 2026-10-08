@@ -105,38 +105,50 @@ The on-chain half is off by default and is its own document:
 
 ## The livestream
 
-`/live` is a password-protected studio that broadcasts the race to any number
-of RTMP destinations — YouTube, Twitch, Kick, X — with uploaded MP3s looping
-underneath. When a round's cut lands, the chart fades out and the winner is
-shown taking the crown, then the chart comes back.
+`/live` is a password-protected studio for a broadcast of the race to any
+number of RTMP(S) destinations — YouTube, Twitch, Kick, X, pump.fun — with
+uploaded MP3s looping underneath. When a round's cut lands, the chart fades
+out and the winner is shown taking the crown, then the chart comes back.
+
+The broadcast runs **on the server**, not in anybody's browser. Go live and it
+stays live — with the studio closed, through deploys and crashes — until
+somebody presses Stop; the choice is saved on the volume and the server
+resumes it when it boots.
 
 Set `LIVE_PASSWORD` to switch it on; unset, every `/api/live` route is a 404.
 The server needs ffmpeg, which Railpack installs from
-`RAILPACK_DEPLOY_APT_PACKAGES=ffmpeg` (already in `.railway/railway.ts`).
+`RAILPACK_DEPLOY_APT_PACKAGES=ffmpeg` (set in `.railway/railway.ts`).
 
 ```
-browser tab (/live)                         server                         platforms
-canvas 1280×720 ─┐                    ┌─ encoder ffmpeg ─┬─ pusher ffmpeg ─► rtmp://…/key
-music (WebAudio) ┴─ MediaRecorder ─ws─┤  WebM → H.264/AAC│─ pusher ffmpeg ─► rtmps://…/key
-                    (WebM, 0.5 s)     └─  as MPEG-TS     └─ …one per destination
+server process ── director ──fork──► renderer process
+                                     ├─ polls /graphql like a visitor does
+                                     ├─ paints 1280×720 at 30 fps (Skia, no browser)
+                                     ├─ decodes the playlist to PCM
+                                     └─► encoder ffmpeg (raw → H.264/AAC, MPEG-TS)
+                                           ├─► pusher ffmpeg ─► rtmp://…/key
+                                           └─► pusher ffmpeg ─► rtmps://…/key
 ```
 
-The page *is* the broadcaster: it draws the scene (`src/live/scene.ts`) onto a
-canvas, records it with the music, and streams the recording up a WebSocket.
-The server encodes once and copies the result to each destination in its own
-process, so one destination dropping, being added or being switched off never
-interrupts the others, and a dropped one reconnects on a backoff
-(`server/src/live/broadcast.ts`). Two things follow from that design:
+- **The renderer is its own process** (`server/src/live/renderer/`), so painting
+  thirty frames a second never queues the game's API behind it, and a crash in
+  native drawing code costs a reconnect rather than the game. The director
+  (`server/src/live/director.ts`) restarts it on a backoff.
+- **One clock** writes each frame with exactly 1/30 s of music, so picture and
+  sound cannot drift however long it runs.
+- **The encoder runs once; each destination is a copy in its own process**, so
+  one dropping, being added or being switched off never interrupts the others,
+  and a dropped one reconnects by itself. `rtmps://` works as given — ffmpeg
+  takes the protocol from the URL.
+- **The stream's chart is drawn by the renderer**, not liveline (which needs a
+  browser), by the same rule as the site's — each coin's share of the field's
+  volume. Colours come from the dark tokens in `src/index.css`; the fonts
+  (Inter, JetBrains Mono, OFL) are in `server/assets/fonts`.
+- **The studio is a remote control.** Its preview is the server's own frame,
+  once a second. Stream keys never come back to the browser; they are written
+  to the volume (`LIVE_DIR`, mode 0600) and redacted from ffmpeg's errors.
 
-- **The stream runs while the tab is open.** Keep it on a machine that stays
-  up, in a window that stays visible: a hidden tab keeps broadcasting, but
-  liveline only animates the chart while the tab is on screen.
-- **Stream keys never come back to the browser.** They are written to the
-  volume (`LIVE_DIR`, mode 0600) and redacted out of ffmpeg's error lines.
-
-Destinations and music live on the volume beside the token logos, not in
-Postgres. Uploads go up in 2 MB parts, because the server gives any one
-request 30 seconds to arrive.
+It costs about a core while on air: the renderer and x264 at 720p30. If the
+studio reports the encoder below real time, set `LIVE_X264_PRESET=superfast`.
 
 ## How requests are defended
 

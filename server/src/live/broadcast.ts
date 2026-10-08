@@ -1,12 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import type { Readable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 import { FFMPEG_PATH, STREAM } from "./config";
 import { encoderArgs, ProgressReader, pusherArgs, type EncodeOptions, type Progress } from "./ffmpeg";
 import { redact, targetOf, type Destination } from "./store";
 
 /**
- * One broadcast: the page's recording in, one encoder, a pusher per destination.
+ * One broadcast: the renderer's picture and sound in, one encoder, a pusher per
+ * destination.
  *
  * See `ffmpeg.ts` for why the work is split that way. What this file owns is
  * the lifecycle — who is running, who has dropped and when to try them again,
@@ -38,11 +39,11 @@ export interface BroadcastStatus {
 
 /**
  * How much unread input a process may build up before it is cut off. An
- * encoder that far behind will never catch up; a pusher that far behind has a
- * destination that has stopped reading, and holding its backlog would be
- * holding the whole broadcast's memory for one dead socket.
+ * encoder some seventy raw frames behind (2.3 s) will never catch up; a pusher
+ * that far behind has a destination that has stopped reading, and holding its
+ * backlog would be holding the whole broadcast's memory for one dead socket.
  */
-const ENCODER_BACKLOG = 64 * 1024 * 1024;
+const ENCODER_BACKLOG = 256 * 1024 * 1024;
 const PUSHER_BACKLOG = 16 * 1024 * 1024;
 const RETRY_MS = [2_000, 5_000, 10_000, 30_000];
 /** Live this long, and a destination's next drop starts the backoff over. */
@@ -79,6 +80,7 @@ function spawnFfmpeg(args: string[], fds: number): ChildProcess {
   const proc = spawn(FFMPEG_PATH, args, { stdio: Array(fds).fill("pipe") });
   // EPIPE when it dies mid-write. Its `close` is what reports that.
   proc.stdin?.on("error", () => {});
+  (proc.stdio[3] as Writable | undefined)?.on?.("error", () => {});
   return proc;
 }
 
@@ -199,7 +201,8 @@ export class Broadcast extends EventEmitter {
 
   constructor(destinations: Destination[], options: EncodeOptions = STREAM) {
     super();
-    this.encoder = spawnFfmpeg(encoderArgs(options), 4);
+    // stdin picture, stdout stream, stderr, fd 3 sound, fd 4 progress.
+    this.encoder = spawnFfmpeg(encoderArgs(options), 5);
 
     this.encoder.stdout!.on("data", (chunk: Buffer) => {
       if (this.state === "starting") {
@@ -210,7 +213,7 @@ export class Broadcast extends EventEmitter {
     });
 
     const progress = new ProgressReader();
-    (this.encoder.stdio[3] as Readable).setEncoding("utf8").on("data", (chunk: string) => {
+    (this.encoder.stdio[4] as Readable).setEncoding("utf8").on("data", (chunk: string) => {
       const reports = progress.push(chunk);
       if (!reports.length) return;
       this.stats = reports[reports.length - 1];
@@ -233,15 +236,16 @@ export class Broadcast extends EventEmitter {
     return this.state === "starting" || this.state === "live";
   }
 
-  /** A piece of the page's recording. */
-  write(chunk: Buffer): void {
+  /** One frame: its picture (RGBA) and the sound that plays under it (s16le). */
+  writeFrame(picture: Buffer, sound: Buffer): void {
     if (!this.running) return;
     const stdin = this.encoder.stdin!;
     if (stdin.writableLength > ENCODER_BACKLOG) {
-      this.fail("The server can't encode as fast as the page is recording.");
+      this.fail("The server can't encode as fast as it renders — try LIVE_X264_PRESET=superfast.");
       return;
     }
-    stdin.write(chunk);
+    stdin.write(picture);
+    (this.encoder.stdio[3] as Writable).write(sound);
   }
 
   /**
@@ -284,7 +288,10 @@ export class Broadcast extends EventEmitter {
   private async finish(abort: boolean): Promise<void> {
     this.notify(true);
     if (abort) this.encoder.kill("SIGKILL");
-    else this.encoder.stdin?.end();
+    else {
+      this.encoder.stdin?.end();
+      (this.encoder.stdio[3] as Writable | undefined)?.end();
+    }
     await exited(this.encoder);
     await Promise.all([...this.pushers.values()].map((p) => p.close()));
     this.pushers.clear();

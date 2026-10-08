@@ -4,11 +4,11 @@ import { FFMPEG_PATH } from "./config";
 /**
  * The two ffmpeg jobs a broadcast is made of.
  *
- * **The encoder** takes what the page records — WebM, whatever codec the
- * browser chose, at whatever frame rate it managed — and makes one clean
- * stream of it: constant 30 fps, H.264 with a keyframe every two seconds, AAC.
- * Platforms reject or stutter on anything looser, and a browser's recorder
- * promises none of it.
+ * **The encoder** takes the renderer's raw frames and raw sound — exactly 30
+ * frames and 44 100 samples a second, written on one clock — and makes H.264
+ * with a keyframe every two seconds, and AAC. Raw input means nothing is
+ * decoded twice, and the timestamps are the frame and sample counts, so the
+ * picture and the music cannot drift apart.
  *
  * **A pusher**, one per destination, copies that stream to an RTMP ingest
  * without touching it. Splitting the two is what lets one destination fail,
@@ -21,30 +21,41 @@ import { FFMPEG_PATH } from "./config";
  */
 
 export interface EncodeOptions {
+  width: number;
+  height: number;
   fps: number;
   videoKbps: number;
   audioKbps: number;
   preset: string;
+  sampleRate: number;
+  channels: number;
 }
 
-/** Progress goes to fd 3, because stdout is the stream itself. */
+/**
+ * Picture on stdin (RGBA), sound on fd 3 (s16le), progress on fd 4 — stdout
+ * is the stream itself.
+ */
 export function encoderArgs(o: EncodeOptions): string[] {
   const gop = String(o.fps * 2);
   return [
     "-hide_banner",
     "-loglevel", "warning",
     "-nostats",
-    "-progress", "pipe:3",
-    // Start on the first second of input, not the default five.
-    "-analyzeduration", "1000000",
-    "-fflags", "+genpts",
-    "-thread_queue_size", "1024",
+    "-progress", "pipe:4",
+    "-f", "rawvideo",
+    "-pix_fmt", "rgba",
+    "-s", `${o.width}x${o.height}`,
+    "-framerate", String(o.fps),
+    "-thread_queue_size", "64",
     "-i", "pipe:0",
-    "-map", "0:v:0",
-    "-map", "0:a:0?",
-    // A canvas is only recorded when it is painted, so the input's frame rate
-    // wanders; `fps` makes it constant by repeating or dropping frames.
-    "-vf", `fps=${o.fps},scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p`,
+    "-f", "s16le",
+    "-ar", String(o.sampleRate),
+    "-ac", String(o.channels),
+    "-thread_queue_size", "512",
+    "-i", "pipe:3",
+    "-map", "0:v",
+    "-map", "1:a",
+    "-vf", "format=yuv420p",
     "-c:v", "libx264",
     "-preset", o.preset,
     "-profile:v", "high",
@@ -58,8 +69,6 @@ export function encoderArgs(o: EncodeOptions): string[] {
     "-sc_threshold", "0",
     "-c:a", "aac",
     "-b:a", `${o.audioKbps}k`,
-    "-ar", "44100",
-    "-ac", "2",
     "-f", "mpegts",
     "-muxdelay", "0",
     "-flush_packets", "1",

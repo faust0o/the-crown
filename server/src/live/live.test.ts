@@ -224,12 +224,18 @@ describe("ffmpeg", () => {
     assert.deepEqual(out[1], { fps: 29.9, kbps: null, speed: null, outTimeMs: 5000, totalBytes: null });
   });
 
-  it("encodes once, to a stream a pusher can join part-way through", () => {
-    const args = encoderArgs({ fps: 30, videoKbps: 3500, audioKbps: 160, preset: "veryfast" });
-    const after = (flag: string) => args[args.indexOf(flag) + 1];
+  it("encodes the renderer's raw frames and sound once, to a stream a pusher can join part-way through", () => {
+    const args = encoderArgs({
+      width: 1280, height: 720, fps: 30, videoKbps: 3500, audioKbps: 160, preset: "veryfast", sampleRate: 44100, channels: 2,
+    });
+    const after = (flag: string, from = 0) => args[args.indexOf(flag, from) + 1];
+    assert.equal(after("-f"), "rawvideo");
+    assert.equal(after("-s"), "1280x720");
+    assert.equal(after("-i"), "pipe:0");
+    assert.equal(after("-i", args.indexOf("pipe:0")), "pipe:3");
     assert.equal(after("-g"), "60");
     assert.equal(after("-keyint_min"), "60");
-    assert.equal(after("-f"), "mpegts");
+    assert.equal(args[args.lastIndexOf("-f") + 1], "mpegts");
     assert.equal(args.at(-1), "pipe:1");
   });
 

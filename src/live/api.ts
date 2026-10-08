@@ -2,6 +2,8 @@
  * The studio's half of /api/live. The session is an HttpOnly cookie the server
  * sets at sign-in, so nothing here holds a token; every call is same-origin and
  * the cookie rides along.
+ *
+ * The broadcast itself runs on the server. This is its remote control.
  */
 
 export interface Destination {
@@ -37,13 +39,26 @@ export interface BroadcastStatus {
     kbps: number | null;
     since: number | null;
   }[];
+  nowPlaying: string | null;
+  /** When the server's renderer last got an answer from the board. */
+  boardAt: number;
+  /** Milliseconds one frame takes to paint. */
+  paintMs: number;
 }
 
 export interface StudioState {
   ffmpeg: boolean;
   destinations: Destination[];
   tracks: Track[];
-  broadcast: BroadcastStatus | null;
+  volume: number;
+  /** Whether the stream should be on air — saved, so it survives restarts. */
+  onAir: boolean;
+  /** Whether it is being rendered right now. */
+  running: boolean;
+  restarting: boolean;
+  /** Why the renderer last stopped, if it did not mean to. */
+  error: string | null;
+  status: BroadcastStatus | null;
 }
 
 /** The server said no, and said why. `status` 401 means the session is gone. */
@@ -105,6 +120,10 @@ export const api = {
   login: (password: string) => call<{ signedIn: boolean }>("/login", json("POST", { password })),
   logout: () => call<{ signedIn: boolean }>("/logout", { method: "POST" }),
   state: () => call<StudioState>("/state"),
+  setOnAir: (onAir: boolean) => call<StudioState>("/broadcast", json("POST", { onAir })),
+  rehearse: () => call<void>("/rehearse", { method: "POST" }),
+  nextTrack: () => call<void>("/music/next", { method: "POST" }),
+  setVolume: (volume: number) => call<{ volume: number }>("/settings", json("PUT", { volume })),
   addDestination: (d: { label: string; url: string; key: string }) =>
     call<Destination>("/destinations", json("POST", d)),
   updateDestination: (id: string, patch: Partial<{ label: string; url: string; key: string; enabled: boolean }>) =>

@@ -1,6 +1,4 @@
-import { ApolloProvider } from "@apollo/client/react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { apolloClient } from "../apollo";
 import { Button, Input, Label, Panel, Rail } from "../casino/ui";
 import { api, ApiError } from "./api";
 import { Studio } from "./Studio";
@@ -10,8 +8,7 @@ import { Studio } from "./Studio";
  *
  * Always the dark theme: the stream is the dark object whatever the operator's
  * browser prefers, and a control room previewing it on an ivory page would be
- * judging the picture against the wrong light. The stage reads its colours
- * from the tokens this puts in force.
+ * judging the picture against the wrong light.
  */
 export default function LiveApp() {
   useEffect(() => {
@@ -42,9 +39,7 @@ export default function LiveApp() {
   return (
     <div className="casino flex min-h-dvh flex-col">
       {session === "in" ? (
-        <ApolloProvider client={apolloClient}>
-          <Studio onSignedOut={signedOut} />
-        </ApolloProvider>
+        <Studio onSignedOut={signedOut} />
       ) : (
         <main className="flex flex-1 items-center justify-center px-6 py-10">
           {session === "checking" ? null : session === "off" ? (

@@ -161,7 +161,7 @@ async function main() {
   serveLogos(app, logoLimiter);
   // The livestream's API and ingest socket. Before the SPA, for the same reason
   // as /rpc: an unmatched /api/live path must not come back as index.html.
-  mountLive(app, httpServer, liveLoginLimiter);
+  mountLive(app, liveLoginLimiter);
   serveClient(app);
 
   // A connection that opens and then dribbles bytes holds a socket for as long

@@ -1,34 +1,30 @@
-import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useClock } from "../casino/hooks/useClock";
 import { Button, Rail, Readout, Section, Tag, cx } from "../casino/ui";
 import { api, ApiError, type StudioState } from "./api";
-import { Broadcaster, recorderMime, type OnAir, type Phase } from "./broadcaster";
 import { Destinations } from "./Destinations";
-import { Music } from "./music";
 import { MusicPanel } from "./MusicPanel";
-import { FPS, Stage } from "./Stage";
-import { useRace } from "./useRace";
 
 /** Runs an API call, sending a lost session back to the gate and anything else to the notice. */
 export type Guard = <T>(work: () => Promise<T>) => Promise<T | undefined>;
 
-const PHASE: Record<Phase, string> = {
-  idle: "Off air",
-  connecting: "Connecting…",
-  live: "On air",
-  reconnecting: "Reconnecting…",
-  stopping: "Stopping…",
-};
+const POLL_MS = 2_000;
+const PREVIEW_MS = 1_000;
+/** The board this long silent, and the stream is showing an old reading. */
+const STALE_MS = 30_000;
 
 /**
- * The control room: the stream as it goes out, the switch that puts it on air,
- * where it goes and what plays under it.
+ * The control room.
+ *
+ * The broadcast runs on the server — a renderer draws it and ffmpeg sends it —
+ * so this page is a remote control and a monitor, nothing more. Going live is a
+ * setting the server keeps: the stream carries on with this page closed, and
+ * comes back by itself after a deploy, until somebody presses Stop.
  */
 export function Studio({ onSignedOut }: { onSignedOut: () => void }) {
-  const { race, history, crowning, rehearse, error: boardDown } = useRace();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [studio, setStudio] = useState<StudioState | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const guard = useCallback<Guard>(
     async (work) => {
@@ -43,81 +39,43 @@ export function Studio({ onSignedOut }: { onSignedOut: () => void }) {
     [onSignedOut]
   );
 
-  // Polled too, for what this window does not hear about on its own socket: a
-  // broadcast running from another window, and edits made from one.
   const refresh = useCallback(async () => {
     const next = await guard(() => api.state());
     if (next) setStudio(next);
   }, [guard]);
   useEffect(() => {
     void refresh();
-    const timer = setInterval(refresh, 5_000);
+    const timer = setInterval(refresh, POLL_MS);
     return () => clearInterval(timer);
   }, [refresh]);
 
-  // Created in an effect, not during render, so StrictMode's double mount
-  // closes the first rather than leaving two audio graphs running.
-  const [music, setMusic] = useState<Music | null>(null);
-  useEffect(() => {
-    const m = new Music();
-    setMusic(m);
-    return () => m.close();
-  }, []);
-  const [, musicChanged] = useReducer((n: number) => n + 1, 0);
-  useEffect(() => music?.subscribe(musicChanged), [music]);
-  const tracks = studio?.tracks;
-  useEffect(() => {
-    if (music && tracks) music.setTracks(tracks);
-  }, [music, tracks]);
-
-  const [onAir, setOnAir] = useState<OnAir | null>(null);
-  const [broadcaster, setBroadcaster] = useState<Broadcaster | null>(null);
-  useEffect(() => {
-    if (!music) return;
-    const b = new Broadcaster(
-      () =>
-        new MediaStream([...canvasRef.current!.captureStream(FPS).getVideoTracks(), music.track]),
-      setOnAir
-    );
-    setBroadcaster(b);
-    setOnAir(b.state);
-    return () => b.dispose();
-  }, [music]);
-
-  const phase = onAir?.phase ?? "idle";
-  const here = phase !== "idle";
-  const elsewhere =
-    !here && (studio?.broadcast?.state === "live" || studio?.broadcast?.state === "starting");
-  const status = here ? onAir?.status : studio?.broadcast;
-  const enabled = (studio?.destinations ?? []).filter((d) => d.enabled).length;
-
-  // Leaving the page ends the broadcast; say so before it happens.
-  useEffect(() => {
-    if (!here) return;
-    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [here]);
-
-  const goLive = async () => {
-    if (!music || !broadcaster) return;
+  const switchTo = async (onAir: boolean) => {
+    if (!onAir && !window.confirm("Stop the broadcast? It stays off until somebody presses Go live.")) return;
     setProblem(null);
-    // In the click, so the browser lets the audio start.
-    await music.play();
-    broadcaster.start();
+    setBusy(true);
+    const next = await guard(() => api.setOnAir(onAir));
+    setBusy(false);
+    if (next) setStudio(next);
   };
-  const stop = () => {
-    broadcaster?.stop();
-    music?.pause();
-  };
+
   const signOut = async () => {
-    stop();
     await api.logout().catch(() => {});
     onSignedOut();
   };
 
-  const canRecord = recorderMime() !== null;
+  const status = studio?.status ?? null;
+  const onAir = studio?.onAir ?? false;
+  const running = studio?.running ?? false;
+  const enabled = (studio?.destinations ?? []).filter((d) => d.enabled).length;
+  const phase = !onAir
+    ? "Off air"
+    : running && status?.state === "live"
+      ? "On air"
+      : studio?.restarting
+        ? "Restarting…"
+        : "Starting…";
   const blocked = !studio ? "Loading…" : !studio.ffmpeg ? "No ffmpeg on the server" : !enabled ? "Add a destination" : null;
+  const boardSilent = status && status.boardAt ? Date.now() - status.boardAt > STALE_MS : Boolean(status);
 
   return (
     <>
@@ -131,9 +89,9 @@ export function Studio({ onSignedOut }: { onSignedOut: () => void }) {
           <span className="flex items-center gap-2 text-sm text-secondary" role="status">
             <span
               aria-hidden="true"
-              className={cx("inline-block h-3.5 w-3.5 rounded-full", phase === "live" ? "mat-glass mat-dome" : "mat-inset")}
+              className={cx("inline-block h-3.5 w-3.5 rounded-full", phase === "On air" ? "mat-glass mat-dome" : "mat-inset")}
             />
-            {elsewhere ? "On air from another window" : PHASE[phase]}
+            {phase}
           </span>
           <div className="ml-auto flex items-center gap-3">
             <Button variant="ghost" className="text-xs" onClick={signOut}>
@@ -156,34 +114,31 @@ export function Studio({ onSignedOut }: { onSignedOut: () => void }) {
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="flex min-w-0 flex-col gap-5">
-            <Section
-              title="The stream"
-              aside={<span className="font-mono tabular-nums">1280×720 · {FPS} fps</span>}
-            >
-              <Stage race={race} history={history} crowning={crowning} canvasRef={canvasRef} />
+            <Section title="The stream" aside={<span className="font-mono tabular-nums">1280×720 · 30 fps</span>}>
+              <Preview running={running} onAir={onAir} />
 
               <div className="mt-4 flex flex-wrap items-center gap-3">
-                {here ? (
-                  <Button size="lg" onClick={stop} disabled={phase === "stopping"}>
-                    {phase === "stopping" ? "Stopping…" : "Stop broadcast"}
+                {onAir ? (
+                  <Button size="lg" onClick={() => switchTo(false)} disabled={busy}>
+                    Stop broadcast
                   </Button>
                 ) : (
                   <Button
                     size="lg"
                     variant="glass"
-                    onClick={goLive}
-                    disabled={Boolean(blocked) || !canRecord}
+                    onClick={() => switchTo(true)}
+                    disabled={busy || Boolean(blocked)}
                     title={blocked ?? undefined}
                   >
-                    {elsewhere ? "Take over and go live" : "Go live"}
+                    {busy ? "Starting…" : "Go live"}
                   </Button>
                 )}
-                <Button onClick={rehearse} disabled={!race.field.length}>
+                <Button onClick={() => guard(() => api.rehearse())} disabled={!running}>
                   Rehearse the crown
                 </Button>
-                {(here || elsewhere) && status && (
+                {running && status && (
                   <div className="ml-auto flex flex-wrap gap-5">
-                    <Readout size="sm" label="On air" value={<Uptime since={here ? onAir?.since ?? null : status.startedAt} />} />
+                    <Readout size="sm" label="On air" value={<Uptime since={status.startedAt} />} />
                     <Readout size="sm" label="Encoder" value={status.fps != null ? `${status.fps.toFixed(0)} fps` : "—"} />
                     <Readout size="sm" label="Speed" value={status.speed != null ? `${status.speed.toFixed(2)}×` : "—"} />
                     <Readout size="sm" label="Bitrate" value={status.kbps != null ? `${(status.kbps / 1000).toFixed(1)} Mb/s` : "—"} />
@@ -192,7 +147,6 @@ export function Studio({ onSignedOut }: { onSignedOut: () => void }) {
               </div>
 
               <ul className="m-0 mt-4 flex list-none flex-col gap-1.5 p-0 text-xs">
-                {!canRecord && <Hint tone="down">This browser can't record WebM. Broadcast from Chrome, Edge or Firefox.</Hint>}
                 {studio && !studio.ffmpeg && (
                   <Hint tone="down">
                     The server has no ffmpeg. Set <code>RAILPACK_DEPLOY_APT_PACKAGES=ffmpeg</code> on the
@@ -200,24 +154,25 @@ export function Studio({ onSignedOut }: { onSignedOut: () => void }) {
                   </Hint>
                 )}
                 {studio?.ffmpeg && !enabled && <Hint>Add a destination, or switch one on, to go live.</Hint>}
-                {onAir?.error && <Hint tone="down">{onAir.error}</Hint>}
-                {status?.state === "failed" && status.error && !here && <Hint tone="down">{status.error}</Hint>}
-                {elsewhere && <Hint>Another window is broadcasting. Going live here takes over from it.</Hint>}
-                {here && (onAir?.queued ?? 0) > 4 * 1024 * 1024 && (
+                {onAir && studio?.error && <Hint tone="down">{studio.error}</Hint>}
+                {onAir && studio?.restarting && <Hint tone="down">The renderer stopped and is being restarted.</Hint>}
+                {running && boardSilent && (
+                  <Hint tone="down">The board hasn't answered for a while. The stream shows its last reading.</Hint>
+                )}
+                {running && status && status.speed != null && status.speed < 0.95 && status.state === "live" &&
+                  Date.now() - status.startedAt > 60_000 && (
                   <Hint tone="down">
-                    The upload is {((onAir?.queued ?? 0) / 1024 / 1024).toFixed(0)} MB behind — this
-                    connection may be too slow for the stream.
+                    The server is encoding slower than real time ({status.speed.toFixed(2)}×). A faster
+                    x264 preset (<code>LIVE_X264_PRESET=superfast</code>) or more CPU will fix it.
                   </Hint>
                 )}
-                {boardDown && <Hint tone="down">Can't reach the board. The stream is showing the last reading.</Hint>}
                 <Hint>
-                  The stream goes out from this tab: keep it open, and on screen. A hidden tab keeps
-                  broadcasting, but the chart only moves while the tab is visible.
+                  The stream runs on the server. Close this page whenever you like: it keeps
+                  broadcasting, and comes back by itself after a deploy, until somebody presses Stop.
                 </Hint>
                 <Hint>
                   When a round's cut lands, the chart fades out and the winner takes the crown for
-                  fourteen seconds. Rehearse it to see it before the room does — it goes out on
-                  air if you are live.
+                  fourteen seconds. Rehearsing shows it on the stream, on air, to whoever is watching.
                 </Hint>
               </ul>
             </Section>
@@ -226,11 +181,18 @@ export function Studio({ onSignedOut }: { onSignedOut: () => void }) {
           <div className="flex min-w-0 flex-col gap-5">
             <Destinations
               destinations={studio?.destinations ?? []}
-              live={here ? (onAir?.status?.destinations ?? []) : (studio?.broadcast?.destinations ?? [])}
+              live={status?.destinations ?? []}
               guard={guard}
               refresh={refresh}
             />
-            <MusicPanel music={music} tracks={studio?.tracks ?? []} guard={guard} refresh={refresh} />
+            <MusicPanel
+              tracks={studio?.tracks ?? []}
+              volume={studio?.volume ?? 0.8}
+              nowPlaying={running ? (status?.nowPlaying ?? null) : null}
+              running={running}
+              guard={guard}
+              refresh={refresh}
+            />
           </div>
         </div>
       </main>
@@ -240,16 +202,53 @@ export function Studio({ onSignedOut }: { onSignedOut: () => void }) {
   );
 }
 
-function Hint({ tone, children }: { tone?: "down"; children: ReactNode }) {
+/**
+ * What is going out: the server's own frame, refreshed every second. Each
+ * frame is loaded off-screen and swapped in once it has arrived, so the
+ * picture never blanks between them.
+ */
+function Preview({ running, onAir }: { running: boolean; onAir: boolean }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!running) {
+      setSrc(null);
+      return;
+    }
+    let live = true;
+    const load = () => {
+      const url = `/api/live/preview.jpg?t=${Date.now()}`;
+      const img = new Image();
+      img.onload = () => live && setSrc(url);
+      img.src = url;
+    };
+    load();
+    const timer = setInterval(load, PREVIEW_MS);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [running]);
+
   return (
-    <li className={cx("m-0 leading-relaxed", tone === "down" ? "text-down" : "text-muted")}>{children}</li>
+    <div className="mat-inset grid aspect-video w-full place-items-center overflow-hidden rounded-lg">
+      {src ? (
+        <img src={src} alt="The stream, as it goes out" className="block h-full w-full object-cover" />
+      ) : (
+        <p className="m-0 px-6 text-center text-sm text-muted">
+          {onAir ? "Starting the stream…" : "Off air. Go live to start the stream on the server."}
+        </p>
+      )}
+    </div>
   );
 }
 
+function Hint({ tone, children }: { tone?: "down"; children: ReactNode }) {
+  return <li className={cx("m-0 leading-relaxed", tone === "down" ? "text-down" : "text-muted")}>{children}</li>;
+}
+
 /** Its own component, so the second hand re-renders this and not the studio. */
-function Uptime({ since }: { since: number | null }) {
+function Uptime({ since }: { since: number }) {
   const now = useClock();
-  if (!since) return <>—</>;
   const s = Math.max(0, Math.floor((now.getTime() - since) / 1000));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);

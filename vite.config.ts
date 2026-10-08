@@ -22,8 +22,8 @@ export default defineConfig({
       // The chain, via the server, so a paid RPC key never reaches the bundle —
       // see server/src/chain/rpc-proxy.ts.
       "/rpc": "http://localhost:4000",
-      // The livestream studio's API and its ingest socket — see server/src/live.
-      "/api/live": { target: "http://localhost:4000", ws: true },
+      // The livestream studio's API — see server/src/live.
+      "/api/live": "http://localhost:4000",
     },
   },
 });

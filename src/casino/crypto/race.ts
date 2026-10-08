@@ -1,6 +1,5 @@
 import type { LivelinePoint, LivelineSeries } from "liveline";
-import type { Mover } from "./GameStats";
-import type { Entry, RankPoint, Standing } from "./graphql";
+import type { RankPoint, Standing } from "./graphql";
 import { lineIcon } from "./lineIcon";
 import { proxied } from "./proxied";
 
@@ -14,8 +13,8 @@ import { proxied } from "./proxied";
  * ordering — a coin overtaking another still crosses here exactly when the rows
  * swap below, because dividing every coin by the same total preserves rank.
  *
- * Shared by the board's chart and the livestream's, so the two can never draw
- * the same race differently.
+ * The livestream draws the same picture by the same rule on the server — see
+ * server/src/live/renderer/scene.ts — which is the one place to change in step.
  */
 export function raceSeries({
   history,
@@ -86,58 +85,4 @@ export function raceSeries({
     value: lead?.value ?? 0,
     spanSecs: Math.max(60, Math.ceil(spanMs / 1000)),
   };
-}
-
-/**
- * The field: every coin the board has to show, which is not the same set as
- * the live top ten.
- *
- * A coin that opened in the round and has since been pushed off the board is
- * still in the race, standing where the cut will score it — one below the last
- * visible slot. A coin that trended in after the open is there too, as a
- * spectator. Between rounds there is no field, and the live board is all there
- * is. The board page builds the same list; this is it for the livestream.
- */
-export function fieldOf(
-  round: {
-    entries: Pick<Entry, "symbol" | "ticker" | "imageUrl" | "startRank" | "liveRank" | "liveVolume" | "livePrice">[];
-  } | null,
-  standings: Standing[]
-): Standing[] {
-  if (!round?.entries.length) return standings;
-  const live = new Map(standings.map((s) => [s.symbol, s]));
-  const inRound = round.entries.map(
-    (e): Standing =>
-      live.get(e.symbol) ?? {
-        symbol: e.symbol,
-        ticker: e.ticker,
-        name: e.ticker,
-        rank: e.liveRank ?? e.startRank,
-        previousRank: null,
-        quoteVolume: e.liveVolume,
-        price: e.livePrice,
-        imageUrl: e.imageUrl,
-        trades1h: 0,
-        wallets1h: 0,
-        priceChange1hPercent: 0,
-      }
-  );
-  const entered = new Set(round.entries.map((e) => e.symbol));
-  const newcomers = standings.filter((s) => !entered.has(s.symbol));
-  return [...inRound, ...newcomers].sort((a, b) => a.rank - b.rank);
-}
-
-/**
- * The round's own coins, measured from where each opened — what the stats over
- * the chart count. A coin that trended in since is not in this race.
- */
-export function moversOf(field: Standing[], entries: ReadonlyMap<string, Pick<Entry, "startRank">>): Mover[] {
-  return (entries.size ? field.filter((s) => entries.has(s.symbol)) : field).map((s) => ({
-    symbol: s.symbol,
-    ticker: s.ticker,
-    imageUrl: s.imageUrl,
-    from: entries.get(s.symbol)?.startRank ?? s.rank,
-    to: s.rank,
-    volume: s.quoteVolume,
-  }));
 }

@@ -1,7 +1,6 @@
-import { useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { Button, Caption, IconButton, Section, cx } from "../casino/ui";
 import { api, type Track } from "./api";
-import type { Music } from "./music";
 import type { Guard } from "./Studio";
 
 const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -9,29 +8,47 @@ const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 /**
  * What plays under the stream: uploaded MP3s, in this order, on a loop.
  *
- * The music is mixed in this page and goes out with the picture, so what the
- * room hears is exactly what this list says. Listening here is a separate
- * switch — the stream carries the music either way.
+ * The music is mixed on the server, into the stream, so what the room hears is
+ * exactly this list — whether or not anybody has this page open. To hear it,
+ * watch the stream.
  */
 export function MusicPanel({
-  music,
   tracks,
+  volume,
+  nowPlaying,
+  running,
   guard,
   refresh,
 }: {
-  music: Music | null;
   tracks: Track[];
+  volume: number;
+  nowPlaying: string | null;
+  running: boolean;
   guard: Guard;
   refresh: () => Promise<void>;
 }) {
   const picker = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState<string | null>(null);
 
+  // The slider answers at once; the server hears where it settled.
+  const [level, setLevel] = useState(volume);
+  const dragging = useRef(false);
+  useEffect(() => {
+    if (!dragging.current) setLevel(volume);
+  }, [volume]);
+  useEffect(() => {
+    if (Math.abs(level - volume) < 0.001) return;
+    const timer = setTimeout(() => {
+      dragging.current = false;
+      void guard(() => api.setVolume(level));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [level, volume, guard]);
+
   const upload = async (e: ChangeEvent<HTMLInputElement>) => {
     const files = [...(e.target.files ?? [])];
     e.target.value = "";
-    // One at a time: each is a whole file in one request, and the list should
-    // fill in the order they were picked.
+    // One at a time: the list should fill in the order they were picked.
     for (const [i, file] of files.entries()) {
       const which = files.length > 1 ? ` ${i + 1} of ${files.length}` : "";
       setUploading(`Uploading${which}…`);
@@ -57,24 +74,16 @@ export function MusicPanel({
     await refresh();
   };
 
-  const current = music?.current ?? null;
-  const playing = music?.playing ?? false;
-
   return (
     <Section title="Music" aside={tracks.length ? `${tracks.length} on a loop` : "silence"}>
       <div className="mat-inset rounded-lg px-3 py-2.5">
-        <Caption>{playing ? "Playing" : "Paused"}</Caption>
-        <div className="mt-0.5 truncate text-sm text-foreground">{current?.name ?? "Nothing to play yet"}</div>
+        <Caption>{nowPlaying ? "Playing on the stream" : running ? "Silence" : "Off air"}</Caption>
+        <div className="mt-0.5 truncate text-sm text-foreground">
+          {nowPlaying ?? (tracks.length ? "Plays while the stream is on air" : "Upload an MP3 to play under the stream")}
+        </div>
         <div className="mt-2.5 flex items-center gap-2">
-          <Button
-            size="sm"
-            disabled={!music || !tracks.length}
-            onClick={() => (playing ? music?.pause() : void music?.play())}
-          >
-            {playing ? "Pause" : "Play"}
-          </Button>
-          <Button size="sm" disabled={!music || tracks.length < 2} onClick={() => music?.next()}>
-            Next
+          <Button size="sm" disabled={!running || tracks.length < 2} onClick={() => guard(() => api.nextTrack())}>
+            Next track
           </Button>
           <label className="ml-auto flex items-center gap-2 text-[11px] text-muted">
             Volume
@@ -83,21 +92,15 @@ export function MusicPanel({
               min={0}
               max={1}
               step={0.05}
-              value={music?.volume ?? 0.8}
-              onChange={(e) => music?.setVolume(Number(e.target.value))}
-              className="w-20 accent-[var(--accent)]"
+              value={level}
+              onChange={(e) => {
+                dragging.current = true;
+                setLevel(Number(e.target.value));
+              }}
+              className="w-24 accent-[var(--accent)]"
             />
           </label>
         </div>
-        <label className="mt-2 flex items-center gap-2 text-[11px] text-muted">
-          <input
-            type="checkbox"
-            checked={music?.monitoring ?? false}
-            onChange={(e) => music?.setMonitoring(e.target.checked)}
-            className="accent-[var(--accent)]"
-          />
-          Hear it here too
-        </label>
       </div>
 
       <ol className="m-0 mt-2 flex list-none flex-col p-0">
@@ -106,7 +109,7 @@ export function MusicPanel({
             key={t.id}
             className={cx(
               "flex items-center gap-2 rounded border-b border-[var(--bevel-lo)] px-1 py-1.5 last:border-b-0",
-              current?.id === t.id && "mat-row-on"
+              nowPlaying === t.name && "mat-row-on"
             )}
           >
             <span className="w-5 shrink-0 text-right font-mono text-[11px] text-muted">{i + 1}</span>
@@ -134,14 +137,7 @@ export function MusicPanel({
       </ol>
 
       <div className="mt-3 flex items-center gap-3">
-        <input
-          ref={picker}
-          type="file"
-          accept="audio/mpeg,.mp3"
-          multiple
-          className="hidden"
-          onChange={upload}
-        />
+        <input ref={picker} type="file" accept="audio/mpeg,.mp3" multiple className="hidden" onChange={upload} />
         <Button onClick={() => picker.current?.click()} disabled={Boolean(uploading)}>
           {uploading ?? "Upload MP3s"}
         </Button>
