@@ -94,6 +94,29 @@ export async function reigningCrown(): Promise<string | null> {
 }
 
 /**
+ * Whether the crown a new round would wear is known yet.
+ *
+ * The crown is the previous round's result, and that result can land after the
+ * slot it hands over to has already begun: the cut waits for a reading of the
+ * market taken at or after its instant, the upstream publishes one every
+ * fifteen seconds or so, and the instant can fall in the round's last seconds.
+ * The next round used to open on its boundary regardless, and took its crown
+ * from the round before last — so the coin that had just been beaten wore it
+ * for a whole round, and the coin that beat it was on the board with a book.
+ *
+ * Not decided while the previous round is still waiting on its cut. The wait is
+ * bounded: `cutDecision` records or voids a cut within `CUT_GRACE_MS` of an
+ * instant no later than the round's end. A round with no seed is the exception —
+ * `tickRounds` never cuts one, so waiting on it would wait forever.
+ */
+export function crownDecided(
+  previous: { status: "OPEN" | "LOCKED" | "CUT" | "SETTLED"; seed: string | null } | null
+): boolean {
+  if (!previous?.seed) return true;
+  return previous.status === "CUT" || previous.status === "SETTLED";
+}
+
+/**
  * Open the market's book on a round before handing it out.
  *
  * Every price in the game is quoted off the tape, and the tape only knows a
@@ -163,6 +186,15 @@ export async function currentRound() {
   // upstream — opens a round whose starting ranks nobody can check, priced off
   // a market that has since moved. The next tick tries again.
   if (!standings.length || !oracle.isLive()) return withBook(null);
+
+  // Nor before the round this one follows has been cut, since that cut is what
+  // decides the crown. See `crownDecided`.
+  const previous = await prisma.round.findFirst({
+    where: { startsAt: { lt: startsAt } },
+    orderBy: { startsAt: "desc" },
+    select: { status: true, seed: true },
+  });
+  if (!crownDecided(previous)) return withBook(null);
 
   const crownSymbol = await reigningCrown();
   const seed = randomBytes(32).toString("hex");

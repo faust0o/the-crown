@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
-import { CUT_GRACE_MS, cutDecision } from "./rounds";
+import { CUT_GRACE_MS, crownDecided, cutDecision } from "./rounds";
 
 /**
  * What a cut is allowed to be made of.
@@ -46,5 +46,34 @@ describe("the cut", () => {
     // Late is not stale: a reading taken after the instant is the cut, whenever
     // the tick that notices it happens to run.
     assert.equal(cutDecision(cutAt + CUT_GRACE_MS * 3, cutAt, live(cutAt + 1_000)), "record");
+  });
+});
+
+/**
+ * When the next round may open: not before the cut that crowns it.
+ *
+ * A cut late in the round is recorded after the boundary, and the round that
+ * opened on that boundary took its crown from the round before last. In
+ * production SPX finished first and PUMP, which it had just beaten, went on
+ * wearing the crown.
+ */
+describe("the next round's crown", () => {
+  it("is not decided while the round before it is still waiting on its cut", () => {
+    assert.equal(crownDecided({ status: "LOCKED", seed: "s" }), false);
+    // An OPEN round past its end is one the loop has not flipped yet — same wait.
+    assert.equal(crownDecided({ status: "OPEN", seed: "s" }), false);
+  });
+
+  it("is decided once that cut is recorded, refunded or not", () => {
+    assert.equal(crownDecided({ status: "CUT", seed: "s" }), true);
+    assert.equal(crownDecided({ status: "SETTLED", seed: "s" }), true);
+  });
+
+  it("does not wait on a round that can never be cut", () => {
+    assert.equal(crownDecided({ status: "LOCKED", seed: null }), true);
+  });
+
+  it("is decided for the very first round", () => {
+    assert.equal(crownDecided(null), true);
   });
 });
