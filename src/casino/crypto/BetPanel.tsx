@@ -183,7 +183,7 @@ export function BetPanel({
 
   if (!standing || !entry) {
     return (
-      <Panel as="section" aria-label="Ticket" className="mb-4 shrink-0">
+      <Panel as="section" aria-label="Ticket" className="mb-4">
         <Empty>Pick a coin from the board to place a bet.</Empty>
       </Panel>
     );
@@ -227,7 +227,7 @@ export function BetPanel({
       dialogs are — a plate across the top saying what it is about, a seam, and
       the face under it.
     */
-    <Panel as="section" aria-label="Ticket" className="mb-4 shrink-0">
+    <Panel as="section" aria-label="Ticket" className="mb-4">
       <div className="mat-plate px-4 pt-3">
         <div className="flex items-center gap-3">
           <CoinIcon ticker={standing.ticker} src={standing.imageUrl} size={40} />

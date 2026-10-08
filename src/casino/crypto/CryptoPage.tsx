@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@apollo/client/react";
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SessionProvider, useSession } from "../session/SessionProvider";
 import {
   Button,
@@ -23,7 +23,6 @@ import {
   type Standing,
 } from "./graphql";
 import { HowItWorks } from "./HowItWorks";
-import { Orders } from "./Orders";
 import { Portfolio } from "./Portfolio";
 import { PreviousRounds } from "./PreviousRounds";
 import { RankBoard } from "./RankBoard";
@@ -77,21 +76,28 @@ function useFavicon(href: string, type: string) {
 }
 
 /**
- * Publish the sticky header's height as `--header-h` on the page, so the ticket
- * column can stick flush under it. Measured rather than assumed: the header
- * wraps on a narrow screen and changes with what the account side shows.
+ * A ref that publishes its element's height as a CSS variable on the element's
+ * parent, kept current as it resizes — for layout that has to know how tall
+ * something is, which CSS alone cannot ask. A callback ref rather than an
+ * effect, so an element that mounts later (the board's column, after a replay)
+ * is measured when it arrives.
  */
-function useHeaderHeight(header: RefObject<HTMLElement | null>) {
-  useEffect(() => {
-    const el = header.current;
-    const page = el?.parentElement;
-    if (!el || !page) return;
-    const observer = new ResizeObserver(() =>
-      page.style.setProperty("--header-h", `${el.offsetHeight}px`)
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [header]);
+function useHeightVar(name: string) {
+  return useCallback(
+    (el: HTMLElement | null) => {
+      const parent = el?.parentElement;
+      if (!el || !parent) return;
+      const observer = new ResizeObserver(() =>
+        parent.style.setProperty(name, `${el.offsetHeight}px`)
+      );
+      observer.observe(el);
+      return () => {
+        observer.disconnect();
+        parent.style.removeProperty(name);
+      };
+    },
+    [name]
+  );
 }
 
 /**
@@ -111,8 +117,8 @@ export default function CryptoPage() {
 function CrownInner() {
   useTitle("The Crown · Utopian Contributors");
   useFavicon("/crown-icon.svg", "image/svg+xml");
-  const headerRef = useRef<HTMLElement>(null);
-  useHeaderHeight(headerRef);
+  const headerRef = useHeightVar("--header-h");
+  const columnRef = useHeightVar("--column-h");
   const { user } = useSession();
   // The same door the header opens, reachable from the ticket — see `onPlace`.
   const { promptSignIn, picker } = useSignInPrompt();
@@ -547,8 +553,20 @@ function CrownInner() {
                 onDismiss={() => setJustSettled(null)}
               />
             )}
+            {/*
+              The ticket's column is pinned under the header while the board
+              scrolls, and lets go once the board has run out — then the rest
+              of it, the full flow, scrolls into view.
+
+              Sticky alone can't do the second half: it releases the column when
+              the grid ends, which is early when the column is nearly as tall as
+              the board and never when it is taller. So the board's column is
+              padded by however far the ticket's column overruns the screen, and
+              the grid ends exactly that far past the board. 3rem is the gap
+              above the column, the page's padding under it and the rail.
+            */}
             <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
-              <div className="flex min-w-0 flex-col gap-5">
+              <div className="flex min-w-0 flex-col gap-5 lg:pb-[max(0px,calc(var(--column-h,0px)+var(--header-h,0px)+3rem-100dvh))]">
                 <VolumeChart
                   title={<GameStats movers={movers} />}
                   history={data?.cryptoRankHistory ?? []}
@@ -569,13 +587,10 @@ function CrownInner() {
                 )}
               </div>
 
-              {/*
-                Pinned under the header while the board scrolls past, so the
-                ticket is in reach of whichever row is picked. Bounded to the
-                viewport: the ticket keeps its height and the feeds under it
-                give up theirs, scrolling inside what is left.
-              */}
-              <div className="flex min-w-0 flex-col gap-5 lg:sticky lg:top-[calc(var(--header-h,0px)+1.25rem)] lg:max-h-[calc(100dvh-var(--header-h,0px)-1.25rem)] lg:self-start">
+              <div
+                ref={columnRef}
+                className="flex min-w-0 flex-col gap-5 lg:sticky lg:top-[calc(var(--header-h,0px)+1.25rem)] lg:self-start"
+              >
                 {/*
                   Always up for a visitor; withheld from an account with nothing
                   to spend — see `charged`.
@@ -610,13 +625,6 @@ function CrownInner() {
                     selling={selling}
                   />
                 )}
-                {/*
-                  Under the ticket, but only once the player has traded this
-                  round. Before that the room's orders are someone else's game,
-                  and the empty feed took the spot right under the ticket from
-                  panels that had something to say.
-                */}
-                {roundBets.length > 0 && <Orders onSelect={onSelect} />}
                 <FlowFeed events={roundFlow} status={error ? "error" : status?.status} />
               </div>
             </div>

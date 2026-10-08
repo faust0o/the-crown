@@ -1,7 +1,7 @@
 import { CoinIcon } from "./CoinIcon";
 import { formatCompact } from "../format";
 import type { FlowEvent } from "./graphql";
-import { Empty, Section } from "../ui";
+import { cx, Empty, Section } from "../ui";
 
 /**
  * Board movements as they happen.
@@ -29,7 +29,14 @@ export function FlowFeed({
 }) {
   const down = status === "error" || status === "degraded";
   const list = (
-    <ul className="m-0 max-h-[460px] min-w-0 list-none overflow-y-auto overflow-x-hidden p-0">
+    <ul
+      className={cx(
+        "m-0 max-h-[460px] min-w-0 list-none overflow-y-auto overflow-x-hidden p-0",
+        // The live feed holds half the screen even when quiet; a replay's sits
+        // among other sections and takes only what it has.
+        !note && "min-h-[50vh]"
+      )}
+    >
       {events.map((e) => {
         const up = e.from == null || e.to < e.from;
         return (
@@ -70,9 +77,7 @@ export function FlowFeed({
     );
   }
   return (
-    // `min-h-0` lets the list give up height when the ticket column is pinned
-    // to the viewport — it scrolls already, so it is the part that can.
-    <section aria-label="Flow" className="mb-4 flex min-h-0 min-w-0 flex-col">
+    <section aria-label="Flow" className="mb-4 flex min-w-0 flex-col">
       {/* The one thing the old caption said that still needs saying — and only
           when it is true. How long ago a healthy feed synced is noise. */}
       {down && <p className="m-0 mb-1.5 text-[11px] text-down">oracle down — the board may be stale</p>}
