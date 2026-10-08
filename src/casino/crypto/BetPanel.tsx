@@ -1,5 +1,5 @@
 import { useQuery } from "@apollo/client/react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { formatCompact, formatCredits } from "../format";
 import { CoinIcon } from "./CoinIcon";
 import { Marquee } from "./Marquee";
@@ -28,6 +28,9 @@ const FRACTIONS = [0.25, 0.5, 0.75] as const;
 
 /** Matches the board's cadence: a quote older than the price beside it is a lie. */
 const POLL_MS = 2_000;
+
+/** How long the bought check stands in for the ticket. The CSS's casino-confirm-* run on this clock. */
+const CONFIRM_MS = 2_700;
 
 const DIRECTIONS = ["HIGHER", "DRAW", "LOWER"] as const;
 
@@ -127,6 +130,20 @@ export function BetPanel({
   const [sellLine, setSellLine] = useState<Direction | null>(null);
 
   /**
+   * The buy that just went through, while its check is up.
+   *
+   * The ticket fades out under it and is inert until it has gone — the key is
+   * still there under the check, and a second tap on something you can't see is
+   * not a decision.
+   */
+  const [confirmed, setConfirmed] = useState<{ stake: number; direction: Direction } | null>(null);
+  useEffect(() => {
+    if (!confirmed) return;
+    const timer = setTimeout(() => setConfirmed(null), CONFIRM_MS);
+    return () => clearTimeout(timer);
+  }, [confirmed]);
+
+  /**
    * Point the ticket back at Buy when the coin changes.
    *
    * Adjusted during render rather than in an effect — switching coins is a
@@ -139,6 +156,7 @@ export function BetPanel({
     setSide("buy");
     setSellInput(null);
     setSellLine(null);
+    setConfirmed(null);
   }
 
   /**
@@ -259,225 +277,264 @@ export function BetPanel({
       dialogs are — a plate across the top saying what it is about, a seam, and
       the face under it.
     */
-    <Panel as="section" aria-label="Ticket" className="mb-4">
-      <div className="mat-plate px-4 pt-3">
-        <div className="flex items-center gap-3">
-          <CoinIcon ticker={standing.ticker} src={standing.imageUrl} size={40} />
-          <div className="min-w-0 flex-1">
-            {/* What the market is about, then what is being traded in it. */}
-            <div className="font-mono text-[11px] tabular-nums text-muted">
-              rank {entry.startRank} → {standing.rank}
-              {moved !== 0 && (
-                <span style={{ color: moved < 0 ? "var(--up)" : "var(--down)" }}>
-                  {" "}
-                  {moved < 0 ? "▲" : "▼"} {Math.abs(moved)}
+    <Panel as="section" aria-label="Ticket" className="relative mb-4">
+      <div inert={confirmed != null} className={cx(confirmed && "casino-confirm-hide")}>
+        <div className="mat-plate px-4 pt-3">
+          <div className="flex items-center gap-3">
+            <CoinIcon ticker={standing.ticker} src={standing.imageUrl} size={40} />
+            <div className="min-w-0 flex-1">
+              {/* What the market is about, then what is being traded in it. */}
+              <div className="font-mono text-[11px] tabular-nums text-muted">
+                rank {entry.startRank} → {standing.rank}
+                {moved !== 0 && (
+                  <span style={{ color: moved < 0 ? "var(--up)" : "var(--down)" }}>
+                    {" "}
+                    {moved < 0 ? "▲" : "▼"} {Math.abs(moved)}
+                  </span>
+                )}
+                {" · $"}
+                {formatCompact(standing.quoteVolume)}
+              </div>
+              <div className="flex min-w-0 items-baseline gap-2">
+                <span className="mat-engrave shrink-0 text-lg font-semibold leading-snug text-foreground">
+                  {standing.ticker}
                 </span>
-              )}
-              {" · $"}
-              {formatCompact(standing.quoteVolume)}
+                <Marquee text={standing.name} className="min-w-0 flex-1 text-sm text-muted" />
+              </div>
             </div>
-            <div className="flex min-w-0 items-baseline gap-2">
-              <span className="mat-engrave shrink-0 text-lg font-semibold leading-snug text-foreground">
-                {standing.ticker}
+          </div>
+
+          {/* The switch, at the foot of the plate: everything under the seam
+              changes with it. Opposite it, the number that caps the amount — the
+              balance while buying, the position while selling. Signed out it is
+              blank rather than "$0": neither exists until there is an account to
+              hold it, and a zero would read as an empty balance rather than as
+              no balance. */}
+          <div className="mt-2 flex items-baseline justify-between gap-3">
+            <SideTabs value={side} onChange={setSide} />
+            {signedIn && (
+              <span className="font-mono text-[11px] tabular-nums text-muted">
+                {isBuy ? `${formatCredits(credits)} free` : `${formatCredits(position)} held`}
               </span>
-              <Marquee text={standing.name} className="min-w-0 flex-1 text-sm text-muted" />
+            )}
+          </div>
+        </div>
+        <Seam />
+
+        <div className="p-4">
+          {crowned && isBuy && (
+            <div
+              title="The reigning token can't be backed. Win the crown by finishing first."
+              className="mb-3 cursor-help text-sm text-gold"
+            >
+              Wearing the crown — no book this round.
             </div>
+          )}
+
+          {/* The three outcomes. Buying, each carries its price; selling, what is
+              standing on it. What a line claims is in the tooltip rather than a
+              paragraph underneath — the wording never changes, and it cost the
+              panel two lines forever. */}
+          <div className="grid grid-cols-3 gap-2">
+            {DIRECTIONS.map((d) => {
+              const tone = TONE[d];
+              const l = entry.lines.find((x) => x.direction === d);
+              const available = isBuy ? Boolean(l?.available) : held[d] > 0;
+              return (
+                <Chip
+                  key={d}
+                  tone={tone.tone}
+                  active={d === active}
+                  disabled={!available}
+                  onClick={() => {
+                    if (isBuy) onDirection(d);
+                    else {
+                      setSellLine(d);
+                      setSellInput(null);
+                    }
+                  }}
+                  title={`${standing.ticker} ${tone.blurb} by the cut, against its rank of ${entry.startRank} at the open`}
+                  className="px-2 py-2"
+                >
+                  <span
+                    className="block text-center text-[10px] font-semibold uppercase tracking-wide"
+                    style={{ color: "var(--tone)" }}
+                  >
+                    {tone.label}
+                  </span>
+                  <span className="block text-center font-mono text-base font-semibold tabular-nums text-foreground">
+                    {isBuy
+                      ? l?.available
+                        ? `${l.cents}¢`
+                        : "—"
+                      : held[d] > 0
+                        ? formatCredits(held[d])
+                        : "—"}
+                  </span>
+                </Chip>
+              );
+            })}
+          </div>
+
+          <div className="mt-4 flex items-center justify-between gap-3">
+            <label htmlFor={amountId} className="shrink-0 text-sm text-foreground">
+              Amount
+            </label>
+            <Amount
+              id={amountId}
+              value={amount}
+              onValue={setAmount}
+              aria-label={isBuy ? "Stake in dollars" : "Dollars of position to sell"}
+            />
+          </div>
+
+          <div className="mt-2.5 flex items-center justify-end gap-1.5">
+            {isBuy
+              ? STAKES.map((s) => (
+                  <Button
+                    key={s}
+                    size="sm"
+                    disabled={ceiling != null && amount >= ceiling}
+                    onClick={() => addAmount(s)}
+                    aria-label={`Add $${s}`}
+                    className="min-w-12 font-mono tabular-nums"
+                  >
+                    +${s}
+                  </Button>
+                ))
+              : FRACTIONS.map((f) => (
+                  <Button
+                    key={f}
+                    size="sm"
+                    disabled={position <= 0}
+                    onClick={() => setAmount(Math.max(1, Math.floor(position * f)))}
+                    aria-label={`Sell ${f * 100}% of the position`}
+                    className="min-w-12 font-mono tabular-nums"
+                  >
+                    {f * 100}%
+                  </Button>
+                ))}
+            <Button
+              size="sm"
+              disabled={!ceiling || amount >= ceiling}
+              onClick={() => ceiling != null && setAmount(ceiling)}
+              title={isBuy ? "Stake every credit you hold" : "Sell the whole position"}
+              className="min-w-12 font-mono uppercase tabular-nums"
+            >
+              Max
+            </Button>
           </div>
         </div>
 
-        {/* The switch, at the foot of the plate: everything under the seam
-            changes with it. Opposite it, the number that caps the amount — the
-            balance while buying, the position while selling. Signed out it is
-            blank rather than "$0": neither exists until there is an account to
-            hold it, and a zero would read as an empty balance rather than as
-            no balance. */}
-        <div className="mt-2 flex items-baseline justify-between gap-3">
-          <SideTabs value={side} onChange={setSide} />
-          {signedIn && (
-            <span className="font-mono text-[11px] tabular-nums text-muted">
-              {isBuy ? `${formatCredits(credits)} free` : `${formatCredits(position)} held`}
-            </span>
+        {/* A tear line, not a seam: what is above it is the order being composed,
+            and below it is what the order comes to. */}
+        <div aria-hidden="true" className="border-t border-dashed border-hairline" />
+
+        <div className="p-4">
+          {/* What the ticket is worth on the other side of the key. Buying, that
+              is the payout if the line lands; selling, it is the cash, now. With
+              no line to buy there is no payout to quote, so the row is left out. */}
+          {isBuy ? (
+            line?.available && (
+              <Payout
+                label="To win"
+                detail={fill ? fillDetail(fill, line.cents, amount) : `price ${line.cents}¢`}
+                value={fill ? formatCredits(fill.payout) : "—"}
+                color="var(--up)"
+              />
+            )
+          ) : (
+            <Payout
+              label="You receive"
+              detail={sale ? `price ${sale.cents}¢ · ${formatSigned(sale.payout - sale.sold)}` : "no bid"}
+              value={sale ? formatCredits(sale.payout) : "—"}
+              color="var(--sell-ink)"
+            />
+          )}
+
+          {/* The one lit control on the page: the thing the page is for. Blue
+              buying and amber selling — the same lamp, and which colour it is is
+              the whole statement about which way the money goes. */}
+          <Button
+            variant="glass"
+            side={isBuy ? "buy" : "sell"}
+            size="lg"
+            block
+            disabled={!ready}
+            onClick={() => {
+              if (isBuy) {
+                if (!fill) return;
+                setSide("buy");
+                // Cleared once the bet is in, so the next tap can't buy the same
+                // stake again by accident. Kept on a failure or a sign-in prompt,
+                // and kept if they started typing the next one while it placed.
+                void onPlace(amount, fill.cents).then((placed) => {
+                  if (!placed) return;
+                  setStake((s) => (s === amount ? 0 : s));
+                  setConfirmed({ stake: amount, direction });
+                });
+              } else {
+                onSell(sellDirection, amount);
+                setSellInput(null);
+              }
+            }}
+          >
+            {isBuy
+              ? busy
+                ? "Placing…"
+                : signedIn
+                  ? `Buy ${TONE[direction].label}`
+                  : // Says what the tap does. A lit key reading "Buy Higher" that
+                    // produces a wallet dialog is a small lie, and the ticket under
+                    // it survives the sign-in — nothing composed here is lost.
+                    "Sign in to buy"
+              : selling
+                ? "Selling…"
+                : `Sell ${TONE[sellDirection].label}`}
+          </Button>
+          {/* Silent while the first quote is in flight: "no bid" is a claim about
+              the book, and a panel that makes it before it has asked is wrong for
+              the couple of hundred milliseconds anybody would actually read it. */}
+          {!ready && !(isBuy ? quoting && fill == null : pricing && sale == null) && (
+            <p className="mt-2 mb-0 text-center text-[11px] text-muted">{refusal}</p>
           )}
         </div>
       </div>
-      <Seam />
 
-      <div className="p-4">
-        {crowned && isBuy && (
-          <div
-            title="The reigning token can't be backed. Win the crown by finishing first."
-            className="mb-3 cursor-help text-sm text-gold"
-          >
-            Wearing the crown — no book this round.
-          </div>
-        )}
-
-        {/* The three outcomes. Buying, each carries its price; selling, what is
-            standing on it. What a line claims is in the tooltip rather than a
-            paragraph underneath — the wording never changes, and it cost the
-            panel two lines forever. */}
-        <div className="grid grid-cols-3 gap-2">
-          {DIRECTIONS.map((d) => {
-            const tone = TONE[d];
-            const l = entry.lines.find((x) => x.direction === d);
-            const available = isBuy ? Boolean(l?.available) : held[d] > 0;
-            return (
-              <Chip
-                key={d}
-                tone={tone.tone}
-                active={d === active}
-                disabled={!available}
-                onClick={() => {
-                  if (isBuy) onDirection(d);
-                  else {
-                    setSellLine(d);
-                    setSellInput(null);
-                  }
-                }}
-                title={`${standing.ticker} ${tone.blurb} by the cut, against its rank of ${entry.startRank} at the open`}
-                className="px-2 py-2"
-              >
-                <span
-                  className="block text-center text-[10px] font-semibold uppercase tracking-wide"
-                  style={{ color: "var(--tone)" }}
-                >
-                  {tone.label}
-                </span>
-                <span className="block text-center font-mono text-base font-semibold tabular-nums text-foreground">
-                  {isBuy
-                    ? l?.available
-                      ? `${l.cents}¢`
-                      : "—"
-                    : held[d] > 0
-                      ? formatCredits(held[d])
-                      : "—"}
-                </span>
-              </Chip>
-            );
-          })}
-        </div>
-
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <label htmlFor={amountId} className="shrink-0 text-sm text-foreground">
-            Amount
-          </label>
-          <Amount
-            id={amountId}
-            value={amount}
-            onValue={setAmount}
-            aria-label={isBuy ? "Stake in dollars" : "Dollars of position to sell"}
-          />
-        </div>
-
-        <div className="mt-2.5 flex items-center justify-end gap-1.5">
-          {isBuy
-            ? STAKES.map((s) => (
-                <Button
-                  key={s}
-                  size="sm"
-                  disabled={ceiling != null && amount >= ceiling}
-                  onClick={() => addAmount(s)}
-                  aria-label={`Add $${s}`}
-                  className="min-w-12 font-mono tabular-nums"
-                >
-                  +${s}
-                </Button>
-              ))
-            : FRACTIONS.map((f) => (
-                <Button
-                  key={f}
-                  size="sm"
-                  disabled={position <= 0}
-                  onClick={() => setAmount(Math.max(1, Math.floor(position * f)))}
-                  aria-label={`Sell ${f * 100}% of the position`}
-                  className="min-w-12 font-mono tabular-nums"
-                >
-                  {f * 100}%
-                </Button>
-              ))}
-          <Button
-            size="sm"
-            disabled={!ceiling || amount >= ceiling}
-            onClick={() => ceiling != null && setAmount(ceiling)}
-            title={isBuy ? "Stake every credit you hold" : "Sell the whole position"}
-            className="min-w-12 font-mono uppercase tabular-nums"
-          >
-            Max
-          </Button>
-        </div>
-      </div>
-
-      {/* A tear line, not a seam: what is above it is the order being composed,
-          and below it is what the order comes to. */}
-      <div aria-hidden="true" className="border-t border-dashed border-hairline" />
-
-      <div className="p-4">
-        {/* What the ticket is worth on the other side of the key. Buying, that
-            is the payout if the line lands; selling, it is the cash, now. With
-            no line to buy there is no payout to quote, so the row is left out. */}
-        {isBuy ? (
-          line?.available && (
-            <Payout
-              label="To win"
-              detail={fill ? fillDetail(fill, line.cents, amount) : `price ${line.cents}¢`}
-              value={fill ? formatCredits(fill.payout) : "—"}
-              color="var(--up)"
-            />
-          )
-        ) : (
-          <Payout
-            label="You receive"
-            detail={sale ? `price ${sale.cents}¢ · ${formatSigned(sale.payout - sale.sold)}` : "no bid"}
-            value={sale ? formatCredits(sale.payout) : "—"}
-            color="var(--sell-ink)"
-          />
-        )}
-
-        {/* The one lit control on the page: the thing the page is for. Blue
-            buying and amber selling — the same lamp, and which colour it is is
-            the whole statement about which way the money goes. */}
-        <Button
-          variant="glass"
-          side={isBuy ? "buy" : "sell"}
-          size="lg"
-          block
-          disabled={!ready}
-          onClick={() => {
-            if (isBuy) {
-              if (!fill) return;
-              setSide("buy");
-              // Cleared once the bet is in, so the next tap can't buy the same
-              // stake again by accident. Kept on a failure or a sign-in prompt,
-              // and kept if they started typing the next one while it placed.
-              void onPlace(amount, fill.cents).then((placed) => {
-                if (placed) setStake((s) => (s === amount ? 0 : s));
-              });
-            } else {
-              onSell(sellDirection, amount);
-              setSellInput(null);
-            }
-          }}
+      {/* The bought check, over the ticket while it is faded out. It pops in,
+          the tick draws on, and it holds for about two seconds before the
+          ticket comes back. */}
+      {confirmed && (
+        <div
+          aria-hidden="true"
+          className="casino-confirm-show absolute inset-0 flex items-center justify-center"
         >
-          {isBuy
-            ? busy
-              ? "Placing…"
-              : signedIn
-                ? `Buy ${TONE[direction].label}`
-                : // Says what the tap does. A lit key reading "Buy Higher" that
-                  // produces a wallet dialog is a small lie, and the ticket under
-                  // it survives the sign-in — nothing composed here is lost.
-                  "Sign in to buy"
-            : selling
-              ? "Selling…"
-              : `Sell ${TONE[sellDirection].label}`}
-        </Button>
-        {/* Silent while the first quote is in flight: "no bid" is a claim about
-            the book, and a panel that makes it before it has asked is wrong for
-            the couple of hundred milliseconds anybody would actually read it. */}
-        {!ready && !(isBuy ? quoting && fill == null : pricing && sale == null) && (
-          <p className="mt-2 mb-0 text-center text-[11px] text-muted">{refusal}</p>
-        )}
-      </div>
+          <svg
+            viewBox="0 0 52 52"
+            width={88}
+            height={88}
+            className="casino-result-pop"
+            style={{ animationDelay: "160ms" }}
+          >
+            <circle cx="26" cy="26" r="26" fill="var(--up-fill)" />
+            <path
+              d="M15 27l7.5 7.5L37.5 19"
+              pathLength={1}
+              fill="none"
+              stroke="white"
+              strokeWidth={4.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="casino-confirm-draw"
+            />
+          </svg>
+        </div>
+      )}
+      {/* Said once for a screen reader: the check is decoration, and the ticket
+          under it is inert while it is up. */}
+      <p role="status" className="sr-only">
+        {confirmed ? `Bought ${formatCredits(confirmed.stake)} on ${TONE[confirmed.direction].label}.` : ""}
+      </p>
     </Panel>
   );
 }

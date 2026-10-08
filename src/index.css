@@ -77,6 +77,9 @@
   --text-muted: oklch(0.5 0.012 62);
 
   --up: oklch(0.475 0.135 150);
+  /* Green as a *fill* under a white glyph — the bought check. `--up` is ink, and
+     in dark it is too pale to carry white. */
+  --up-fill: oklch(0.56 0.15 150);
   --down: oklch(0.52 0.19 27);
   --gold: oklch(0.495 0.1 88);
   --accent: oklch(0.62 0.17 50);
@@ -176,6 +179,7 @@
   --text-muted: oklch(0.66 0.01 70);
 
   --up: oklch(0.74 0.17 150);
+  --up-fill: oklch(0.6 0.16 150);
   --down: oklch(0.68 0.19 27);
   --gold: oklch(0.82 0.14 92);
   --accent: oklch(0.74 0.175 58);
@@ -795,6 +799,38 @@
   animation: casino-result-pop 520ms cubic-bezier(0.22, 1, 0.36, 1) 80ms both;
 }
 
+/*
+ * A buy going through: the ticket steps back, a check stands in for it for about
+ * two seconds, and the ticket comes back cleared. Both run on one 2.7s clock —
+ * BetPanel's CONFIRM_MS — so the stops are shares of it.
+ */
+@keyframes casino-confirm-hide {
+  0%       { opacity: 1; }
+  8%, 90%  { opacity: 0; }
+  100%     { opacity: 1; }
+}
+.casino-confirm-hide {
+  animation: casino-confirm-hide 2.7s ease both;
+}
+@keyframes casino-confirm-show {
+  0%, 6%     { opacity: 0; }
+  14%, 88%   { opacity: 1; }
+  97%, 100%  { opacity: 0; }
+}
+.casino-confirm-show {
+  animation: casino-confirm-show 2.7s ease both;
+}
+/* The tick, drawn on once the circle has landed. Starts past 1 so the round cap
+   isn't a dot waiting at the start of the stroke. */
+@keyframes casino-confirm-draw {
+  from { stroke-dashoffset: 1.1; }
+  to   { stroke-dashoffset: 0; }
+}
+.casino-confirm-draw {
+  stroke-dasharray: 1 2;
+  animation: casino-confirm-draw 380ms cubic-bezier(0.65, 0, 0.35, 1) 380ms both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .casino-animate-in,
   .casino-flash-up,
@@ -805,6 +841,7 @@
   .casino-tape-in,
   .casino-result-in,
   .casino-result-pop,
+  .casino-confirm-draw,
   [style*="casino-marquee-text"] {
     animation: none;
   }
