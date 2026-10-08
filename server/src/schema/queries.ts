@@ -8,6 +8,7 @@ import { oracle, WINDOW_LABEL } from "../oracle/index";
 import { currentRound } from "../rounds";
 import { toRoundView, toCryptoBetView, liveRankOf } from "../crypto-views";
 import { quoteSale } from "../sell";
+import { quoteBet } from "../bets";
 import type { Direction } from "../market";
 
 /**
@@ -116,6 +117,34 @@ export const queries = extendType({
       resolve: async () => {
         const round = await currentRound();
         return round ? toRoundView(round) : null;
+      },
+    });
+
+    /**
+     * What buying `stake` credits of a line would fill at and pay if it lands.
+     *
+     * The buy side's counterpart to `cryptoSellQuote`, for the same reason: the
+     * price depends on the size, and only the server holds the curve. Public,
+     * like the board — a signed-out ticket is fully live.
+     *
+     * Null whenever the bet itself would be refused.
+     */
+    t.field("cryptoBuyQuote", {
+      type: "CryptoBuyQuote",
+      args: {
+        symbol: nonNull(stringArg()),
+        direction: nonNull(arg({ type: "RankDirection" })),
+        stake: nonNull(intArg()),
+      },
+      resolve: async (_root, args) => {
+        const round = await currentRound();
+        if (!round) return null;
+        return quoteBet({
+          round,
+          symbol: args.symbol,
+          direction: args.direction as Direction,
+          stake: args.stake,
+        });
       },
     });
 

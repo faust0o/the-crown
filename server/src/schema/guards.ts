@@ -172,6 +172,8 @@ export const guards: IMiddlewareTypeMap<unknown, Context, Args> = {
     // Polled while the amount is being typed, so its budget is a panel's, not a
     // trade's — the trade it precedes is `sellCryptoPosition` below.
     cryptoSellQuote: chain(mineOrNull, limit(600, 60_000)),
+    // The buy side's, public like the board it prices.
+    cryptoBuyQuote: limit(600, 60_000),
   },
   Mutation: {
     walletChallenge: limit(20, 10 * 60_000),

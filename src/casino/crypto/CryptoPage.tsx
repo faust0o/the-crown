@@ -387,9 +387,14 @@ function CrownInner() {
     [bettable]
   );
 
-  /** Place the ticket. Resolves true only if the bet went through. */
+  /**
+   * Place the ticket. Resolves true only if the bet went through.
+   *
+   * `maxCents` is the fill the ticket quoted; the server refuses the bet rather
+   * than fill it worse, so the payout on screen is the least it will pay.
+   */
   const onPlace = useCallback(
-    async (stake: number) => {
+    async (stake: number, maxCents: number) => {
       // No account yet: the key is a door. `promptSignIn` puts the wallet
       // picker up as well as arming the signature, because `signIn()` alone
       // waits for a key that a visitor with no wallet connected never supplies
@@ -401,7 +406,7 @@ function CrownInner() {
       if (!activeSymbol) return false;
       setBusy(true);
       try {
-        await placeBet({ variables: { symbol: activeSymbol, direction, stake } });
+        await placeBet({ variables: { symbol: activeSymbol, direction, stake, maxCents } });
         await refetch();
         return true;
       } catch (err) {

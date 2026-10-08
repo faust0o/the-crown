@@ -1,6 +1,7 @@
 import { createHash, randomBytes, createHmac } from "node:crypto";
 import { prisma } from "./prisma";
 import { closeBook, openRound, type RoundBook } from "./market";
+import { winnings } from "./bets";
 import { oracle, BOARD_SIZE, type Standing } from "./oracle/index";
 
 /**
@@ -419,7 +420,7 @@ async function settleRound(roundId: string): Promise<void> {
     if (cutRank == null) {
       voided.push(bet.id);
     } else if (outcomeOf(bet.startRank, cutRank) === bet.direction) {
-      won.push({ id: bet.id, payout: Math.round(bet.stake * bet.odds), cutRank });
+      won.push({ id: bet.id, payout: winnings(bet.stake, bet.odds), cutRank });
     } else {
       lost.push({ id: bet.id, cutRank });
     }

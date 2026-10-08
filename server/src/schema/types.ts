@@ -235,6 +235,23 @@ export const CryptoSale = objectType({
   },
 });
 
+/**
+ * What a stake would fill at and pay, before it is placed.
+ *
+ * The ticket's "to win". Not the board's price times the stake: a stake that is
+ * large against the pool moves the line as it fills, and pays the average of
+ * that move — see `quoteBet`.
+ */
+export const CryptoBuyQuote = objectType({
+  name: "CryptoBuyQuote",
+  definition(t) {
+    /** The price the whole stake fills at, in cents. */
+    t.nonNull.int("cents");
+    /** What a win returns, stake included. */
+    t.nonNull.int("payout");
+  },
+});
+
 export const BookLevel = objectType({
   name: "BookLevel",
   definition(t) {

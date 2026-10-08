@@ -144,6 +144,14 @@ export interface CryptoBet {
  * one function: the price depends on how much is being sold, so "what you would
  * get" is not something the client can derive from a per-lot value.
  */
+/** What a stake would fill at and pay, before it is placed. */
+export interface CryptoBuyQuote {
+  /** The price the whole stake fills at, in cents — after its own impact. */
+  cents: number;
+  /** What a win returns, stake included. */
+  payout: number;
+}
+
 export interface CryptoSale {
   /** Credits of position closed. Clamped to what is held. */
   sold: number;
@@ -265,12 +273,13 @@ export const BOARD: TypedDocumentNode<
   }
 `;
 
+/** `maxCents` is the worst fill accepted — what the ticket quoted. */
 export const PLACE_BET: TypedDocumentNode<
   { placeCryptoBet: CryptoBet },
-  { symbol: string; direction: Direction; stake: number }
+  { symbol: string; direction: Direction; stake: number; maxCents?: number | null }
 > = gql`
-  mutation PlaceCryptoBet($symbol: String!, $direction: RankDirection!, $stake: Int!) {
-    placeCryptoBet(symbol: $symbol, direction: $direction, stake: $stake) { ${BET_FIELDS} }
+  mutation PlaceCryptoBet($symbol: String!, $direction: RankDirection!, $stake: Int!, $maxCents: Int) {
+    placeCryptoBet(symbol: $symbol, direction: $direction, stake: $stake, maxCents: $maxCents) { ${BET_FIELDS} }
   }
 `;
 
@@ -342,6 +351,26 @@ export const ROUNDS: TypedDocumentNode<
         cutRank
         isCrown
       }
+    }
+  }
+`;
+
+/**
+ * What buying `stake` credits of one line would fill at and pay right now.
+ *
+ * The ticket's "to win". The board's price is what the next credit pays; a
+ * stake that is large against the pool moves the line as it fills and pays the
+ * average, so the payout is a function of the size — and, like the sell quote,
+ * only the server holds that curve.
+ */
+export const BUY_QUOTE: TypedDocumentNode<
+  { cryptoBuyQuote: CryptoBuyQuote | null },
+  { symbol: string; direction: Direction; stake: number }
+> = gql`
+  query CryptoBuyQuote($symbol: String!, $direction: RankDirection!, $stake: Int!) {
+    cryptoBuyQuote(symbol: $symbol, direction: $direction, stake: $stake) {
+      cents
+      payout
     }
   }
 `;

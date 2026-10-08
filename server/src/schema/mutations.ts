@@ -174,6 +174,8 @@ export const mutations = extendType({
         symbol: nonNull(stringArg()),
         direction: nonNull(arg({ type: "RankDirection" })),
         stake: nonNull(intArg()),
+        /** The worst fill accepted, in cents — what the ticket quoted. */
+        maxCents: intArg(),
       },
       resolve: async (_root, args, ctx) => {
         const userId = callerId(ctx);
@@ -187,6 +189,7 @@ export const mutations = extendType({
           symbol: args.symbol,
           direction: args.direction,
           stake: args.stake,
+          maxCents: args.maxCents,
         });
         if (!placed.ok) throw badInput(placed.message);
 

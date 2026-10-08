@@ -3,7 +3,15 @@ import { useId, useState } from "react";
 import { formatCompact, formatCredits } from "../format";
 import { CoinIcon } from "./CoinIcon";
 import { Marquee } from "./Marquee";
-import { SELL_QUOTE, type CryptoBet, type Direction, type Entry, type Standing } from "./graphql";
+import {
+  BUY_QUOTE,
+  SELL_QUOTE,
+  type CryptoBet,
+  type CryptoBuyQuote,
+  type Direction,
+  type Entry,
+  type Standing,
+} from "./graphql";
 import { Amount, Button, Chip, cx, Empty, Panel, Seam, type Tone } from "../ui";
 
 /** Buying, the chips stack: four taps on +25 is a hundred. */
@@ -95,8 +103,11 @@ export function BetPanel({
   onDirection: (d: Direction) => void;
   busy: boolean;
   credits: number | null;
-  /** Resolves true once the bet is placed — not on a sign-in prompt or a failure. */
-  onPlace: (stake: number) => Promise<boolean>;
+  /**
+   * Resolves true once the bet is placed — not on a sign-in prompt or a failure.
+   * `maxCents` is the fill this ticket quoted; worse than that is refused.
+   */
+  onPlace: (stake: number, maxCents: number) => Promise<boolean>;
   /** Sell part or all of one line's position. */
   onSell: (direction: Direction, stake: number) => void;
   selling: boolean;
@@ -182,6 +193,23 @@ export function BetPanel({
   });
   const sale = isBuy ? null : (quoted?.cryptoSellQuote ?? null);
 
+  /**
+   * What this stake would fill at and pay, from the server, at this size.
+   *
+   * Not `amount * line.multiplier`. The board's price is what the *next* credit
+   * pays; a stake that is big against the pool walks the line up as it fills
+   * and pays the average of the walk. Multiplying the board price out quoted a
+   * 10,000 stake on a 17¢ line at nearly 60,000 to win, and it paid 14,000.
+   */
+  const { data: bought, loading: quoting } = useQuery(BUY_QUOTE, {
+    variables: { symbol: standing?.symbol ?? "", direction, stake: amount },
+    skip: !isBuy || !standing || amount <= 0 || !line?.available,
+    pollInterval: POLL_MS,
+    fetchPolicy: "cache-and-network",
+    errorPolicy: "all",
+  });
+  const fill = isBuy ? (bought?.cryptoBuyQuote ?? null) : null;
+
   if (!standing || !entry) {
     return (
       <Panel as="section" aria-label="Ticket" className="mb-4">
@@ -201,6 +229,7 @@ export function BetPanel({
     roundOpen &&
     !busy &&
     Boolean(line?.available) &&
+    fill != null &&
     amount > 0 &&
     (!signedIn || (credits ?? 0) >= amount);
   const canSell =
@@ -390,8 +419,8 @@ export function BetPanel({
           line?.available && (
             <Payout
               label="To win"
-              detail={`price ${line.cents}¢ · ${line.multiplier.toFixed(2)}x`}
-              value={formatCredits(amount * line.multiplier)}
+              detail={fill ? fillDetail(fill, line.cents, amount) : `price ${line.cents}¢`}
+              value={fill ? formatCredits(fill.payout) : "—"}
               color="var(--up)"
             />
           )
@@ -415,11 +444,12 @@ export function BetPanel({
           disabled={!ready}
           onClick={() => {
             if (isBuy) {
+              if (!fill) return;
               setSide("buy");
               // Cleared once the bet is in, so the next tap can't buy the same
               // stake again by accident. Kept on a failure or a sign-in prompt,
               // and kept if they started typing the next one while it placed.
-              void onPlace(amount).then((placed) => {
+              void onPlace(amount, fill.cents).then((placed) => {
                 if (placed) setStake((s) => (s === amount ? 0 : s));
               });
             } else {
@@ -444,7 +474,7 @@ export function BetPanel({
         {/* Silent while the first quote is in flight: "no bid" is a claim about
             the book, and a panel that makes it before it has asked is wrong for
             the couple of hundred milliseconds anybody would actually read it. */}
-        {!ready && !(pricing && sale == null) && (
+        {!ready && !(isBuy ? quoting && fill == null : pricing && sale == null) && (
           <p className="mt-2 mb-0 text-center text-[11px] text-muted">{refusal}</p>
         )}
       </div>
@@ -510,6 +540,16 @@ function Payout({
       </span>
     </div>
   );
+}
+
+/**
+ * How a buy was priced. A stake big enough to move the line fills above the
+ * board's price, and saying both is what explains a payout smaller than the
+ * board's multiplier would suggest.
+ */
+function fillDetail(fill: CryptoBuyQuote, boardCents: number, stake: number): string {
+  const price = fill.cents > boardCents ? `avg ${fill.cents}¢ (board ${boardCents}¢)` : `price ${fill.cents}¢`;
+  return `${price} · ${(fill.payout / stake).toFixed(2)}x`;
 }
 
 /** A gain or a loss on a sale, against what the credits sold cost. */
