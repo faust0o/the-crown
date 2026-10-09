@@ -1,5 +1,5 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 4709730f1d6608dee4ffb3a386d1732f776c5f5c..ed15648eaf7dd4cb448a92660180b89d8f93b8a4 100644
+index 4709730f1d6608dee4ffb3a386d1732f776c5f5c..7ce77e9b532d46a2deebf97985445b56fbc79ecc 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
 @@ -1450,6 +1450,11 @@ function drawEmpty(ctx, w, h, pad, palette, alpha = 1, now_ms = 0, skipLine = fa
@@ -57,6 +57,15 @@ index 4709730f1d6608dee4ffb3a386d1732f776c5f5c..ed15648eaf7dd4cb448a92660180b89d
          ctx.font = '600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
          let maxLabelW = 0;
          for (const s of effectiveMultiSeries) {
+@@ -3114,7 +3126,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+       for (const s of effectiveMultiSeries) {
+         let alpha = seriesAlphas.get(s.id) ?? 1;
+         const target = hiddenIds?.has(s.id) ? 0 : 1;
+-        alpha = noMotion ? target : lerp(alpha, target, SERIES_TOGGLE_SPEED, pausedDt);
++        alpha = noMotion ? target : lerp(alpha, target, SERIES_TOGGLE_SPEED, dt);
+         if (alpha < 0.01) alpha = 0;
+         if (alpha > 0.99) alpha = 1;
+         seriesAlphas.set(s.id, alpha);
 @@ -3181,7 +3193,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
              if (range.min < globalMin) globalMin = range.min;
              if (range.max > globalMax) globalMax = range.max;
@@ -66,6 +75,15 @@ index 4709730f1d6608dee4ffb3a386d1732f776c5f5c..ed15648eaf7dd4cb448a92660180b89d
          }
        }
        if (seriesEntries.length === 0) {
+@@ -3217,7 +3229,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+         transition,
+         adaptiveSpeed,
+         chartH,
+-        pausedDt
++        dt
+       );
+       rangeInitedRef.current = rangeResult.rangeInited;
+       targetMinRef.current = rangeResult.targetMin;
 @@ -3594,7 +3606,8 @@ function Liveline({
        data: s.data,
        value: s.value,
@@ -103,7 +121,7 @@ index 414c4e61bac1017c49bbaedbd1691bcd9cdd667c..d3064e4c2b7430fceddcb67033f290e5
  interface LivelineProps {
      data: LivelinePoint[];
 diff --git a/dist/index.js b/dist/index.js
-index fd0506272e9a54432a0882c3a389ee74302e4718..e49b89ffea0d83dcac7b54629c0bb00307ef55e2 100644
+index fd0506272e9a54432a0882c3a389ee74302e4718..4596f741646f7a54e59b7c3f3caa04dfa657fc17 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -1423,6 +1423,11 @@ function drawEmpty(ctx, w, h, pad, palette, alpha = 1, now_ms = 0, skipLine = fa
@@ -161,6 +179,15 @@ index fd0506272e9a54432a0882c3a389ee74302e4718..e49b89ffea0d83dcac7b54629c0bb003
          ctx.font = '600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
          let maxLabelW = 0;
          for (const s of effectiveMultiSeries) {
+@@ -3087,7 +3099,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+       for (const s of effectiveMultiSeries) {
+         let alpha = seriesAlphas.get(s.id) ?? 1;
+         const target = hiddenIds?.has(s.id) ? 0 : 1;
+-        alpha = noMotion ? target : lerp(alpha, target, SERIES_TOGGLE_SPEED, pausedDt);
++        alpha = noMotion ? target : lerp(alpha, target, SERIES_TOGGLE_SPEED, dt);
+         if (alpha < 0.01) alpha = 0;
+         if (alpha > 0.99) alpha = 1;
+         seriesAlphas.set(s.id, alpha);
 @@ -3154,7 +3166,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
              if (range.min < globalMin) globalMin = range.min;
              if (range.max > globalMax) globalMax = range.max;
@@ -170,6 +197,15 @@ index fd0506272e9a54432a0882c3a389ee74302e4718..e49b89ffea0d83dcac7b54629c0bb003
          }
        }
        if (seriesEntries.length === 0) {
+@@ -3190,7 +3202,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+         transition,
+         adaptiveSpeed,
+         chartH,
+-        pausedDt
++        dt
+       );
+       rangeInitedRef.current = rangeResult.rangeInited;
+       targetMinRef.current = rangeResult.targetMin;
 @@ -3567,7 +3579,8 @@ function Liveline({
        data: s.data,
        value: s.value,

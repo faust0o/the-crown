@@ -317,7 +317,7 @@ export const ROUND_REPLAY: TypedDocumentNode<
 `;
 
 /**
- * Finished rounds, for the results + verification panel.
+ * A finished round, as `RoundResult` holds it.
  *
  * Its own selection rather than `ROUND_FIELDS`, and the difference is the point:
  * a finished round has no book, so it asks for no `lines`, no `liveVolume` and
@@ -327,31 +327,47 @@ export const ROUND_REPLAY: TypedDocumentNode<
  * the database held. Asking for what the panel draws costs about a twentieth of
  * that, and the fields it dropped were ones it never rendered.
  */
+const RESULT_FIELDS = `
+  id
+  startsAt
+  lockAt
+  endsAt
+  status
+  commitHash
+  seed
+  cutAt
+  cutWindowSeconds
+  crownSymbol
+  entries {
+    symbol
+    ticker
+    imageUrl
+    startRank
+    cutRank
+    isCrown
+  }
+`;
+
+/** Finished rounds, for the results + verification panel. */
 export const ROUNDS: TypedDocumentNode<
   { cryptoRounds: RoundResult[] },
   { limit?: number }
 > = gql`
   query CryptoRounds($limit: Int) {
-    cryptoRounds(limit: $limit) {
-      id
-      startsAt
-      lockAt
-      endsAt
-      status
-      commitHash
-      seed
-      cutAt
-      cutWindowSeconds
-      crownSymbol
-      entries {
-        symbol
-        ticker
-        imageUrl
-        startRank
-        cutRank
-        isCrown
-      }
-    }
+    cryptoRounds(limit: $limit) { ${RESULT_FIELDS} }
+  }
+`;
+
+/**
+ * One finished round by id, for a replay opened from its link — which may name
+ * a round long since out of `ROUNDS`' reach. Null if no such round has a cut.
+ */
+export const ROUND_RESULT: TypedDocumentNode<
+  { roundResult: RoundResult | null },
+  { roundId: string }
+> = gql`
+  query RoundResult($roundId: String!) {
+    roundResult(roundId: $roundId) { ${RESULT_FIELDS} }
   }
 `;
 

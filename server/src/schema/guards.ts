@@ -167,6 +167,7 @@ export const guards: IMiddlewareTypeMap<unknown, Context, Args> = {
     roundReplay: limit(120, 60_000),
     roundTokens: limit(120, 60_000),
     cryptoRounds: limit(120, 60_000),
+    roundResult: limit(120, 60_000),
     cryptoRankHistory: limit(240, 60_000),
     orders: limit(600, 60_000),
     // Polled while the amount is being typed, so its budget is a panel's, not a

@@ -55,10 +55,9 @@ describe("query budgets", () => {
     // them the way the template literal does, or this prices a hole.
     const chunk = (name: string) =>
       (source.match(new RegExp(`const ${name} = \`([\\s\\S]*?)\``)) ?? [])[1] ?? "";
-    const inline = (doc: string) =>
-      doc
-        .replace(/\$\{ROUND_FIELDS\}/g, chunk("ROUND_FIELDS"))
-        .replace(/\$\{BET_FIELDS\}/g, chunk("BET_FIELDS"));
+    // Every one by name, so a fragment added later is priced without being
+    // listed here first.
+    const inline = (doc: string) => doc.replace(/\$\{(\w+)\}/g, (_, name: string) => chunk(name));
 
     const documents = [...source.matchAll(/gql`([\s\S]*?)`/g)].map((m) => inline(m[1]));
     assert.ok(documents.length >= 5, `expected to find the client's documents, got ${documents.length}`);

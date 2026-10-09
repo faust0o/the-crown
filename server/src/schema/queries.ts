@@ -239,6 +239,24 @@ export const queries = extendType({
       },
     });
     /**
+     * One finished round by id — the round a replay link names.
+     *
+     * The history above stops at fifty, and a link is meant to outlast that.
+     * Null for a round with no cut yet, on the history's own terms: a round
+     * without a result has nothing to replay.
+     */
+    t.field("roundResult", {
+      type: "Round",
+      args: { roundId: nonNull(stringArg()) },
+      resolve: async (_root, args, ctx) => {
+        const round = await ctx.prisma.round.findUnique({
+          where: { id: args.roundId },
+          include: { entries: true },
+        });
+        return round?.cutAt ? toRoundView(round) : null;
+      },
+    });
+    /**
      * Every ordering recorded during a round, oldest first — enough to replay
      * the race. Reads the persisted samples rather than the oracle's in-memory
      * buffer, so rounds stay replayable long after they scroll out of it.

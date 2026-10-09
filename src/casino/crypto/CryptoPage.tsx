@@ -3,9 +3,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SessionProvider, useSession } from "../session/SessionProvider";
 import {
   Button,
+  Empty,
   IconButton,
   Panel,
   Rail,
+  Section,
   Segmented,
   ThemeToggle,
 } from "../ui";
@@ -16,6 +18,7 @@ import { GameStats, type Mover } from "./GameStats";
 import {
   BOARD,
   PLACE_BET,
+  ROUND_RESULT,
   ROUNDS,
   SELL_POSITION,
   type Direction,
@@ -75,6 +78,24 @@ function useFavicon(href: string, type: string) {
   }, [href, type]);
 }
 
+/** The round a replay link names — `?round=<id>` — or null on the live board. */
+const roundInUrl = () => new URLSearchParams(window.location.search).get("round");
+
+/**
+ * Name the replayed round in the address bar, or take it back out.
+ *
+ * Pushed rather than replaced, so a replay is a page like any other: Back leaves
+ * it the way it came in, and a reload or a shared link opens the same round.
+ */
+function setRoundInUrl(id: string | null, how: "push" | "replace" = "push") {
+  const url = new URL(window.location.href);
+  if (id) url.searchParams.set("round", id);
+  else url.searchParams.delete("round");
+  if (url.href === window.location.href) return;
+  if (how === "push") window.history.pushState(null, "", url);
+  else window.history.replaceState(null, "", url);
+}
+
 /**
  * A ref that publishes its element's height as a CSS variable on the element's
  * parent, kept current as it resizes — for layout that has to know how tall
@@ -125,12 +146,59 @@ function CrownInner() {
   const [tab, setTab] = useState<Tab>("board");
   const [howOpen, setHowOpen] = useState(false);
   const [pastOpen, setPastOpen] = useState(false);
-  // A settled round — picked out of the list, or the one they were just
-  // watching. Either way the board tab replays it until they come back.
-  // `RoundResult`, not `Round`: a replay is drawn from a finished round's
-  // results, and the history panel hands over exactly those.
-  const [replay, setReplay] = useState<RoundResult | null>(null);
+  // A settled round — picked out of the list, the one they were just watching,
+  // or the one a link names. Whichever, the board tab replays it until they
+  // come back, and the URL says which — see `setRoundInUrl`.
+  const [replayId, setReplayId] = useState<string | null>(roundInUrl);
+  // The round itself, when the page already holds it. `RoundResult`, not
+  // `Round`: a replay is drawn from a finished round's results, and the history
+  // panel hands over exactly those. A link opened cold has only the id, so the
+  // round is asked for by it.
+  const [handed, setHanded] = useState<RoundResult | null>(null);
   const [replayIsFresh, setReplayIsFresh] = useState(false);
+  const { data: linked, error: linkError } = useQuery(ROUND_RESULT, {
+    variables: { roundId: replayId ?? "" },
+    skip: !replayId || handed?.id === replayId,
+  });
+  const replay = !replayId
+    ? null
+    : handed?.id === replayId
+      ? handed
+      : linked?.roundResult?.id === replayId
+        ? linked.roundResult
+        : null;
+
+  const openReplay = useCallback((picked: RoundResult, fresh: boolean) => {
+    setHanded(picked);
+    setReplayId(picked.id);
+    setReplayIsFresh(fresh);
+    setRoundInUrl(picked.id);
+  }, []);
+  const exitReplay = useCallback(() => {
+    setReplayId(null);
+    setRoundInUrl(null);
+  }, []);
+
+  // Back and Forward move between the live board and replays.
+  useEffect(() => {
+    const onPop = () => {
+      const id = roundInUrl();
+      setReplayId(id);
+      setReplayIsFresh(false);
+      if (id) setTab("board");
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  // A link to a round with no result — mistyped, or not cut yet — opens the
+  // live board rather than a replay with nothing in it.
+  useEffect(() => {
+    if (replayId && linked && linked.roundResult === null) {
+      setReplayId(null);
+      setRoundInUrl(null, "replace");
+    }
+  }, [replayId, linked]);
   /** The round that ended under the player, waiting on its settlement. */
   const [ended, setEnded] = useState<string | null>(null);
   /** That round once settled, offered from the live board rather than replacing it. */
@@ -546,16 +614,26 @@ function CrownInner() {
             round={replay}
             standings={standings}
             justEnded={replayIsFresh}
-            onExit={() => setReplay(null)}
+            onExit={exitReplay}
           />
+        ) : replayId ? (
+          <Section
+            title="Replay"
+            aside={
+              <Button size="sm" onClick={exitReplay}>
+                Back to the live round
+              </Button>
+            }
+          >
+            <Empty>{linkError ? "Could not load that round." : "loading the round…"}</Empty>
+          </Section>
         ) : (
           <div className="flex flex-col gap-5">
             {justSettled && (
               <RoundOverBar
                 round={justSettled}
                 onOpen={() => {
-                  setReplay(justSettled);
-                  setReplayIsFresh(true);
+                  openReplay(justSettled, true);
                   setJustSettled(null);
                 }}
                 onDismiss={() => setJustSettled(null)}
@@ -649,8 +727,7 @@ function CrownInner() {
         open={pastOpen}
         onClose={() => setPastOpen(false)}
         onReplay={(picked) => {
-          setReplay(picked);
-          setReplayIsFresh(false);
+          openReplay(picked, false);
           setPastOpen(false);
           setTab("board");
         }}
