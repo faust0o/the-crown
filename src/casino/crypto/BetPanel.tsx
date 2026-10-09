@@ -417,8 +417,9 @@ export function BetPanel({
             />
           </div>
 
-          {/* On a phone the keys share the row evenly and stand a thumb tall. */}
-          <div className="mt-2.5 flex items-center justify-end gap-1.5">
+          {/* The keys share the row evenly, edge to edge under the amount, and
+              on a phone stand a thumb tall. */}
+          <div className="mt-2.5 flex items-center gap-1.5">
             {isBuy
               ? STAKES.map((s) => (
                   <Button
@@ -427,7 +428,7 @@ export function BetPanel({
                     disabled={ceiling != null && amount >= ceiling}
                     onClick={() => addAmount(s)}
                     aria-label={`Add $${s}`}
-                    className="min-w-12 font-mono tabular-nums max-sm:h-10 max-sm:flex-1"
+                    className="min-w-12 font-mono tabular-nums flex-1 max-sm:h-10"
                   >
                     +${s}
                   </Button>
@@ -439,7 +440,7 @@ export function BetPanel({
                     disabled={position <= 0}
                     onClick={() => setAmount(Math.max(1, Math.floor(position * f)))}
                     aria-label={`Sell ${f * 100}% of the position`}
-                    className="min-w-12 font-mono tabular-nums max-sm:h-10 max-sm:flex-1"
+                    className="min-w-12 font-mono tabular-nums flex-1 max-sm:h-10"
                   >
                     {f * 100}%
                   </Button>
@@ -449,7 +450,7 @@ export function BetPanel({
               disabled={!ceiling || amount >= ceiling}
               onClick={() => ceiling != null && setAmount(ceiling)}
               title={isBuy ? "Stake every credit you hold" : "Sell the whole position"}
-              className="min-w-12 font-mono uppercase tabular-nums max-sm:h-10 max-sm:flex-1"
+              className="min-w-12 font-mono uppercase tabular-nums flex-1 max-sm:h-10"
             >
               Max
             </Button>
