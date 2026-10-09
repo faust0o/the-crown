@@ -238,7 +238,7 @@ function CrownInner() {
    * A coin that trended in after the round opened is the mirror case and belongs
    * here too, but as a spectator — the row explains it is in from the next round
    * and carries no book. The chart draws its line from the poll it arrives on,
-   * so the picture over the board never leaves out a row the board is showing.
+   * as long as it ranks among the ten the chart has room for — see `raceSeries`.
    *
    * Between rounds there is no field, and the live board is all there is.
    */

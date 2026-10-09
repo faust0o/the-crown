@@ -3,6 +3,9 @@ import type { RankPoint, Standing } from "./graphql";
 import { lineIcon } from "./lineIcon";
 import { proxied } from "./proxied";
 
+/** The most lines the chart draws — see `ordered` below. */
+const MAX_LINES = 10;
+
 /**
  * The race, as the chart plots it: each coin's share of the field's total
  * volume.
@@ -56,7 +59,11 @@ export function raceSeries({
   // token's colour comes from its symbol rather than its position — that
   // index-keyed palette was what made lines swap colours and appear to lurch
   // whenever the ranking changed.
-  const ordered = standings.filter((s) => bySymbol.has(s.symbol));
+  //
+  // Capped at the top ten. The field can run past ten — coins that dropped off
+  // the board mid-round stay in it, and newcomers join them — and every line
+  // adds a legend entry, which overflowed the chart into the column beside it.
+  const ordered = standings.filter((s) => bySymbol.has(s.symbol)).slice(0, MAX_LINES);
 
   const series: LivelineSeries[] = ordered.map((s) => ({
     id: s.symbol,
