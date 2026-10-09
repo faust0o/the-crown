@@ -1,4 +1,4 @@
-import type { ComponentProps, ReactNode } from "react";
+import { useRef, type ComponentProps, type ReactNode } from "react";
 import { cx } from "./cx";
 
 /**
@@ -33,12 +33,15 @@ export function Input({ className, ...rest }: ComponentProps<"input">) {
  * they are the wrong control anyway: a stake moves in fives and hundreds, which
  * is what the chips under it are. `inputMode` still brings up the numeric keypad.
  *
- * Sized to its own digits so the `$` stays against the number as it grows. The
- * face is monospaced, so a `ch` is exactly a digit.
+ * The field spans the width it is given, so a tap anywhere along the row lands
+ * in it, not only on the digits. The figure sits flush right and the `$` is set
+ * against its first digit as it grows. The face is monospaced, so a `ch` is
+ * exactly a digit.
  */
 export function Amount({
   value,
   onValue,
+  onClick,
   className,
   ...rest
 }: {
@@ -46,26 +49,41 @@ export function Amount({
   onValue: (n: number) => void;
 } & Omit<ComponentProps<"input">, "value" | "onChange" | "type">) {
   const digits = Math.max(1, String(value).length);
+  const sign = useRef<HTMLSpanElement>(null);
   return (
     <span
       className={cx(
-        "inline-flex items-baseline justify-end gap-0.5",
+        "relative flex w-full min-w-0",
         "font-mono text-3xl leading-none tabular-nums text-foreground",
         className
       )}
     >
-      <span aria-hidden="true" className="text-muted">
-        $
-      </span>
       <input
         type="text"
         inputMode="numeric"
         value={value}
         onChange={(e) => onValue(Math.max(0, Math.floor(Number(e.target.value.replace(/[^\d]/g, "")) || 0)))}
-        style={{ width: `${digits}ch` }}
-        className="min-w-0 border-0 bg-transparent p-0 text-right font-mono tabular-nums text-inherit outline-none"
+        onClick={(e) => {
+          // A tap in the blank stretch left of the figure puts the caret before
+          // it, where a typed digit goes in front: "0" becomes "50", not "5".
+          const input = e.currentTarget;
+          const edge = sign.current?.getBoundingClientRect().right;
+          if (edge != null && e.clientX <= edge && input.selectionStart === input.selectionEnd) {
+            input.setSelectionRange(input.value.length, input.value.length);
+          }
+          onClick?.(e);
+        }}
+        className="w-full min-w-0 border-0 bg-transparent p-0 text-right font-mono tabular-nums text-inherit outline-none"
         {...rest}
       />
+      <span
+        ref={sign}
+        aria-hidden="true"
+        style={{ right: `calc(${digits}ch + 0.125rem)` }}
+        className="pointer-events-none absolute inset-y-0 flex items-center text-muted"
+      >
+        $
+      </span>
     </span>
   );
 }
