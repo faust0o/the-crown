@@ -1,7 +1,7 @@
 import { useQuery } from "@apollo/client/react";
 import { useMemo } from "react";
 import { formatCompact } from "../format";
-import { Button, Empty, IconButton, Section, Tag } from "../ui";
+import { Button, Empty, Section, Tag } from "../ui";
 import { CoinIcon, MoveArrow, RankedCoin } from "./CoinIcon";
 import { FlowFeed } from "./FlowFeed";
 import { GameStats, type Mover } from "./GameStats";
@@ -274,71 +274,20 @@ function ReplayBar({
         {hhmm(round.startsAt)} – {hhmm(round.endsAt)}
       </span>
       {/* Said once, where there is room to. On a phone the tag already says it,
-          and the sentence took three lines above the thing it described. */}
-      <span className="text-xs text-muted max-sm:hidden">
-        {justEnded
-          ? "That round just settled — here is how it finished. The next one is already running."
-          : "This round is over — the board below is where it finished, and nothing on it can be backed."}
-      </span>
+          and the sentence took three lines above the thing it described. Not
+          for the round that just ended under the player: the "round over" tag
+          and the key to the new round say all of it. */}
+      {!justEnded && (
+        <span className="text-xs text-muted max-sm:hidden">
+          This round is over — the board below is where it finished, and nothing on it can be backed.
+        </span>
+      )}
       <Button size="sm" onClick={onExit} className="ml-auto">
         <span className="sm:hidden">{justEnded ? "New round" : "Back to live"}</span>
         <span className="max-sm:hidden">
           {justEnded ? "Go to the new round" : "Back to the live round"}
         </span>
       </Button>
-    </div>
-  );
-}
-
-/**
- * The round that just settled, announced over the live board.
- *
- * It used to take the board over outright — the next round was already running
- * and the page froze on the last one's numbers. Now the board stays live and the
- * finished round is one press away, with the one fact most people want from it
- * on the bar itself.
- */
-export function RoundOverBar({
-  round,
-  onOpen,
-  onDismiss,
-}: {
-  round: RoundResult;
-  onOpen: () => void;
-  onDismiss: () => void;
-}) {
-  const winner = round.entries.find((e) => e.cutRank === 1) ?? null;
-
-  return (
-    <div className="casino-animate-in flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-hairline pb-3">
-      <Tag tone="gold">round over</Tag>
-      <span className="font-mono text-sm tabular-nums text-foreground max-sm:hidden">
-        {hhmm(round.startsAt)} – {hhmm(round.endsAt)}
-      </span>
-      {winner ? (
-        <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted">
-          <CoinIcon ticker={winner.ticker} src={winner.imageUrl} size={18} />
-          <span className="font-semibold text-foreground">{winner.ticker}</span> took the crown
-        </span>
-      ) : (
-        <span className="text-xs text-muted">No cut was recorded for that round.</span>
-      )}
-      <span className="ml-auto flex items-center gap-2">
-        <Button size="sm" onClick={onOpen}>
-          <span className="sm:hidden">Replay</span>
-          <span className="max-sm:hidden">See how it finished</span>
-        </Button>
-        <IconButton label="Dismiss" size="sm" onClick={onDismiss}>
-          <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true" fill="none">
-            <path
-              d="M7 7l10 10M17 7L7 17"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-          </svg>
-        </IconButton>
-      </span>
     </div>
   );
 }

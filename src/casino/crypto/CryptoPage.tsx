@@ -33,7 +33,7 @@ import { Portfolio } from "./Portfolio";
 import { PreviousRounds } from "./PreviousRounds";
 import { RankBoard } from "./RankBoard";
 import { RoundClock } from "./RoundClock";
-import { RoundOverBar, RoundReplay } from "./RoundReplay";
+import { RoundReplay } from "./RoundReplay";
 import { useSignInPrompt } from "./useSignIn";
 import { VolumeChart } from "./VolumeChart";
 import { SignInButton, WalletButton } from "./WalletButton";
@@ -206,8 +206,6 @@ function CrownInner() {
   }, [replayId, linked]);
   /** The round that ended under the player, waiting on its settlement. */
   const [ended, setEnded] = useState<string | null>(null);
-  /** That round once settled, offered from the live board rather than replacing it. */
-  const [justSettled, setJustSettled] = useState<RoundResult | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [direction, setDirection] = useState<Direction>("HIGHER");
   const [busy, setBusy] = useState(false);
@@ -255,10 +253,9 @@ function CrownInner() {
   const round = data?.cryptoRound ?? null;
   const status = data?.oracleStatus;
 
-  // Tell the player the round they were just watching has settled, rather than
-  // rolling them silently into the next one — but over the live board, not in
-  // place of it. It used to switch straight into the replay, which froze the
-  // page on the old round's numbers while the next one was already trading.
+  // Show the player how the round they were just watching finished, rather than
+  // rolling them silently into the next one. The replay's own key takes them on
+  // to the new round, so it stands in for the live board only until they ask.
   //
   // The trigger is the live round's id changing: rounds are back-to-back, so
   // the next one opens within a tick of the old one ending. Waiting for the
@@ -273,7 +270,8 @@ function CrownInner() {
   }, [round?.id]);
 
   // Settlement lands a tick or two after the round ends, so the round is asked
-  // for until it comes back SETTLED — and given up on if it never does.
+  // for until it comes back SETTLED — and given up on if it never does. A player
+  // who has gone to their portfolio or another round by then is left there.
   const { data: recent } = useQuery(ROUNDS, {
     variables: { limit: 3 },
     skip: !ended,
@@ -286,9 +284,9 @@ function CrownInner() {
       (r) => r.id === ended && r.status === "SETTLED"
     );
     if (!settled) return;
-    setJustSettled(settled);
     setEnded(null);
-  }, [ended, recent]);
+    if (tab === "board" && !replayId) openReplay(settled, true);
+  }, [ended, recent, tab, replayId, openReplay]);
   useEffect(() => {
     if (!ended) return;
     const timer = setTimeout(() => setEnded(null), 120_000);
@@ -738,16 +736,6 @@ function CrownInner() {
           </Section>
         ) : (
           <div className="flex flex-col gap-5">
-            {justSettled && (
-              <RoundOverBar
-                round={justSettled}
-                onOpen={() => {
-                  openReplay(justSettled, true);
-                  setJustSettled(null);
-                }}
-                onDismiss={() => setJustSettled(null)}
-              />
-            )}
             {/*
               The ticket's column is pinned under the header while the board
               scrolls, and lets go once the board has run out — then the rest
