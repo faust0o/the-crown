@@ -7,7 +7,6 @@ import {
   BUY_QUOTE,
   SELL_QUOTE,
   type CryptoBet,
-  type CryptoBuyQuote,
   type Direction,
   type Entry,
   type Standing,
@@ -469,7 +468,12 @@ export function BetPanel({
             line?.available && (
               <Payout
                 label="To win"
-                detail={fill ? fillDetail(fill, line.cents, amount) : `price ${line.cents}¢`}
+                // The multiplier the stake actually fills at, and nothing else.
+                // It used to say the average fill against the board's price as
+                // well, which explained the number by making it harder to read.
+                // Blank until quoted rather than the board's figure, which a
+                // big stake would then visibly walk away from.
+                detail={fill ? `${(fill.payout / amount).toFixed(2)}x` : "\u00a0"}
                 value={fill ? formatCredits(fill.payout) : "—"}
                 color="var(--up)"
               />
@@ -644,16 +648,6 @@ function Payout({
       </span>
     </div>
   );
-}
-
-/**
- * How a buy was priced. A stake big enough to move the line fills above the
- * board's price, and saying both is what explains a payout smaller than the
- * board's multiplier would suggest.
- */
-function fillDetail(fill: CryptoBuyQuote, boardCents: number, stake: number): string {
-  const price = fill.cents > boardCents ? `avg ${fill.cents}¢ (board ${boardCents}¢)` : `price ${fill.cents}¢`;
-  return `${price} · ${(fill.payout / stake).toFixed(2)}x`;
 }
 
 /** A gain or a loss on a sale, against what the credits sold cost. */

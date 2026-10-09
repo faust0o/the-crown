@@ -40,20 +40,10 @@ export function RankBoard({
   /** Selecting a coin fills the ticket; a price chip also preselects its side. */
   onSelect: (symbol: string, direction?: Direction) => void;
 }) {
-  // Totals across the whole board, so the header states the size of the race.
-  const totalVolume = standings.reduce((n, s) => n + s.quoteVolume, 0);
-  const totalTrades = standings.reduce((n, s) => n + s.trades1h, 0);
-
+  // No totals opposite the caption: the race's volume is already the first
+  // figure over the chart, and the trade count was a number nobody bet on.
   return (
-    <Section
-      title="The Field"
-      className="mt-0.5"
-      aside={
-        <span className="font-mono tabular-nums">
-          ${formatCompact(totalVolume)} · {formatCompact(totalTrades)} tx
-        </span>
-      }
-    >
+    <Section title="The Field" className="mt-0.5">
       {/*
         What to do with the board, wherever the ticket is not on screen beside
         it to say so — and on a phone, what the columns are. Each chip there is
