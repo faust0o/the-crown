@@ -86,7 +86,7 @@ function RoundRow({
       type="button"
       onClick={onReplay}
       title="Replay this round"
-      className="flex w-full items-center gap-3 px-5 py-3 text-left transition-colors hover:bg-[color-mix(in_oklch,var(--foreground)_5%,transparent)]"
+      className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors sm:px-5 sm:py-3 hover:bg-[color-mix(in_oklch,var(--foreground)_5%,transparent)]"
     >
       <span className="font-mono text-xs tabular-nums text-muted">{when}</span>
       {winner && <CoinIcon ticker={winner.ticker} src={winner.imageUrl} size={20} />}
@@ -106,7 +106,10 @@ function RoundRow({
         ) : (
           <span className="text-xs text-muted">settling…</span>
         ))}
-      <span className="shrink-0 text-xs text-secondary">Replay →</span>
+      {/* The whole row is the button; on a phone the arrow alone says so. */}
+      <span className="shrink-0 text-xs text-secondary">
+        <span className="max-sm:hidden">Replay </span>→
+      </span>
     </button>
   );
 }

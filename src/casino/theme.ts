@@ -22,6 +22,13 @@ import { useSyncExternalStore } from "react";
 export type ThemePreference = "light" | "dark" | "auto";
 export type ColorScheme = "light" | "dark";
 
+/** The order the theme key steps through: match system → light → dark → back. */
+export const NEXT_THEME: Record<ThemePreference, ThemePreference> = {
+  auto: "light",
+  light: "dark",
+  dark: "auto",
+};
+
 /** Shared with the boot script in index.html. Changing it means changing both. */
 const KEY = "crown:theme";
 const QUERY = "(prefers-color-scheme: dark)";

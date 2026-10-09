@@ -12,11 +12,22 @@ import { IconButton } from "./Button";
 import { Seam } from "./Panel";
 
 const WIDTH = {
-  sm: "max-w-sm",
-  md: "max-w-lg",
-  lg: "max-w-xl",
-  xl: "max-w-3xl",
+  sm: "sm:max-w-sm",
+  md: "sm:max-w-lg",
+  lg: "sm:max-w-xl",
+  xl: "sm:max-w-3xl",
 } as const;
+
+/**
+ * Every dialog that is open, oldest first.
+ *
+ * Overlays stack — the ticket's sheet can put the wallet picker over itself —
+ * and each one listens on the window. Only the one on top may answer Escape or
+ * keep Tab inside itself: one Escape used to close every dialog on screen at
+ * once, and two traps fought over the same keystroke.
+ */
+const stack: object[] = [];
+const onTop = (token: object) => stack[stack.length - 1] === token;
 
 /**
  * Everything a modal in this app has to get right, in one place.
@@ -27,6 +38,10 @@ const WIDTH = {
  * here: focus is genuinely *trapped* rather than merely moved on open, and it
  * is handed back to whatever opened the dialog on close, so dismissing one with
  * the keyboard does not drop you at the top of the document.
+ *
+ * On a phone it is a sheet: pinned to the bottom edge, full width, rounded only
+ * across the top, and scrolling inside itself — the place a thumb already is,
+ * and the shape every phone has taught people to dismiss by tapping above it.
  *
  * `onSubmit` turns the shell into a form. A single-field dialog needs that — a value
  * you can type is a code you expect Enter to send — and wrapping a whole
@@ -71,17 +86,32 @@ export function Dialog({
   initialFocus?: RefObject<HTMLElement | null>;
   onSubmit?: (e: FormEvent) => void;
   className?: string;
+  /** The body's classes, padding included — in place of the default `p-5`. */
   bodyClassName?: string;
   children?: ReactNode;
 }) {
   const panel = useRef<HTMLElement | null>(null);
   const opener = useRef<Element | null>(null);
+  /**
+   * The latest `onClose`, read when a key needs it rather than subscribed to.
+   *
+   * Callers pass a fresh arrow on every render, and the page re-renders on
+   * every poll. As a dependency it re-ran the effect below each time — which
+   * re-focused the panel out from under whatever was being typed in it, every
+   * two seconds, and would re-shuffle the stack of open dialogs.
+   */
+  const close = useRef(onClose);
+  useEffect(() => {
+    close.current = onClose;
+  });
 
   useScrollLock(open);
 
   useEffect(() => {
     if (!open) return;
     opener.current = document.activeElement;
+    const token = {};
+    stack.push(token);
 
     // Focus lands where the dialog says, and otherwise on the panel itself,
     // which is focusable only for this reason.
@@ -96,8 +126,9 @@ export function Dialog({
     (initialFocus?.current ?? panel.current)?.focus();
 
     const onKey = (e: KeyboardEvent) => {
+      if (!onTop(token)) return;
       if (e.key === "Escape") {
-        onClose();
+        close.current();
         return;
       }
       if (e.key !== "Tab" || !panel.current) return;
@@ -122,12 +153,13 @@ export function Dialog({
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
+      stack.splice(stack.indexOf(token), 1);
       // Back where they came from. Guarded because the opener can have been
       // unmounted by whatever the dialog just did.
       const back = opener.current;
       if (back instanceof HTMLElement && back.isConnected) back.focus();
     };
-  }, [open, onClose, initialFocus]);
+  }, [open, initialFocus]);
 
   if (!open) return null;
 
@@ -146,18 +178,26 @@ export function Dialog({
     tabIndex: -1,
     onClick: (e: MouseEvent) => e.stopPropagation(),
     className: cx(
-      "mat-panel mat-grain casino-animate-in w-full overflow-hidden rounded-xl outline-none",
+      "mat-panel mat-grain casino-dialog w-full outline-none",
+      // The sheet: scrolls inside itself, and clears the home indicator.
+      "max-h-[92dvh] overflow-y-auto overscroll-contain rounded-t-2xl pb-[env(safe-area-inset-bottom)]",
+      "sm:rounded-xl sm:pb-0",
       WIDTH[size],
-      align === "center" && "max-h-[85dvh] overflow-y-auto",
+      align === "center" ? "sm:max-h-[85dvh]" : "sm:max-h-none sm:overflow-hidden",
       className
     ),
   };
 
   const inner = (
     <>
+      {/* The grip a sheet is drawn with. Only a sheet has one. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute top-1.5 left-1/2 z-10 h-1 w-9 -translate-x-1/2 rounded-full bg-foreground/20 sm:hidden"
+      />
       {(title || headerAside) && (
         <>
-          <div className="mat-plate flex items-center justify-between gap-4 px-5 py-3">
+          <div className="mat-plate flex items-center justify-between gap-4 px-5 pt-4 pb-3 sm:pt-3">
             <h2 className="mat-engrave m-0 text-base font-semibold text-foreground">
               {title}
             </h2>
@@ -172,7 +212,10 @@ export function Dialog({
         </>
       )}
 
-      <div className={cx("p-5", bodyClassName)}>{children}</div>
+      {/* `bodyClassName` replaces the padding rather than adding to it: two
+          paddings on one element are decided by stylesheet order, not by which
+          was written last, and `p-5` was beating every caller's `p-0`. */}
+      <div className={bodyClassName ?? "p-5"}>{children}</div>
 
       {footer && (
         <>
@@ -186,9 +229,9 @@ export function Dialog({
   return (
     <div
       className={cx(
-        "mat-scrim fixed inset-0 flex justify-center p-4",
+        "mat-scrim fixed inset-0 flex items-end justify-center overscroll-contain sm:p-4",
         elevated ? "z-[60]" : "z-50",
-        align === "start" ? "items-start overflow-y-auto py-10" : "items-center"
+        align === "start" ? "sm:items-start sm:overflow-y-auto sm:py-10" : "sm:items-center"
       )}
       onClick={onClose}
     >

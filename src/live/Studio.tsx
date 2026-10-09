@@ -80,7 +80,7 @@ export function Studio({ onSignedOut }: { onSignedOut: () => void }) {
   return (
     <>
       <header className="mat-panel-flush mat-grain sticky top-0 z-30 rounded-none border-x-0 border-t-0">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 px-6 py-3">
+        <div className="casino-gutter mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 py-3">
           <a href="/" className="flex items-center gap-2.5 no-underline">
             <img src="/crown-icon.svg" alt="" aria-hidden="true" width={28} height={28} className="h-7 w-7 shrink-0 rounded" />
             <span className="mat-engrave text-lg font-semibold text-foreground">The Crown</span>
@@ -102,7 +102,7 @@ export function Studio({ onSignedOut }: { onSignedOut: () => void }) {
         <Rail groove />
       </header>
 
-      <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-5">
+      <main className="casino-gutter mx-auto w-full max-w-6xl flex-1 py-5">
         {problem && (
           <div role="alert" className="mb-4 flex items-start justify-between gap-4 rounded-lg border border-hairline px-3 py-2 text-sm text-down">
             <span>{problem}</span>

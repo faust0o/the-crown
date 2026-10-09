@@ -38,23 +38,44 @@ export function GameStats({ movers }: { movers: Mover[] }) {
   );
 
   return (
-    <span className="flex flex-wrap items-center gap-x-6 gap-y-1">
-      <Stat label="Total volume">${formatCompact(total)}</Stat>
-      <Stat label="Biggest climber">
+    <span className="flex flex-wrap items-center gap-x-4 gap-y-1 sm:gap-x-6">
+      <Stat label="Total volume" short="Vol">
+        ${formatCompact(total)}
+      </Stat>
+      <Stat label="Biggest climber" short={null}>
         <MoverValue mover={climber} />
       </Stat>
-      <Stat label="Biggest loser">
+      <Stat label="Biggest loser" short={null}>
         <MoverValue mover={loser} />
       </Stat>
     </span>
   );
 }
 
-/** A caption and its figure. The caption takes the section heading's own style. */
-function Stat({ label, children }: { label: string; children: ReactNode }) {
+/**
+ * A caption and its figure. The caption takes the section heading's own style.
+ *
+ * On a phone the three would not share a line under their full captions, so
+ * each says `short` instead — or nothing, for a mover, whose arrow already says
+ * which way it went. The full caption stays for a screen reader either way.
+ */
+function Stat({
+  label,
+  short,
+  children,
+}: {
+  label: string;
+  short: string | null;
+  children: ReactNode;
+}) {
   return (
     <span className="flex items-center gap-2">
-      {label}
+      <span className="max-sm:sr-only">{label}</span>
+      {short && (
+        <span aria-hidden="true" className="sm:hidden">
+          {short}
+        </span>
+      )}
       <span className="flex items-center gap-1.5 font-mono text-sm font-normal normal-case tracking-normal tabular-nums text-foreground">
         {children}
       </span>

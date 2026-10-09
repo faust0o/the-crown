@@ -1,5 +1,6 @@
 import { Liveline } from "liveline";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { ROOMY, useMediaQuery } from "../hooks/useMediaQuery";
 import { useColorScheme } from "../theme";
 import { proxied } from "./proxied";
 import { raceSeries } from "./race";
@@ -40,6 +41,13 @@ export function VolumeChart({
 }) {
   const iconColors = useIconColors(standings.map((s) => proxied(s.imageUrl)));
   const scheme = useColorScheme();
+  // Shorter on a phone, and shortest on a phone on its side: the chart sets the
+  // scene, and the board under it is what is played.
+  //
+  // On a phone the legend is its coloured dots alone. Ten named keys ran a
+  // row twice the width of the screen, and the lines carry their coins' logos
+  // at their ends anyway.
+  const roomy = useMediaQuery(ROOMY);
 
   // liveline anchors its time axis to the wall clock, so samples from a round
   // that has already ended either squeeze into a sliver at the far left or fall
@@ -108,7 +116,7 @@ export function VolumeChart({
   return (
     <Section title={title}>
       <div
-        className="h-[320px] min-h-0"
+        className="h-[200px] min-h-0 sm:h-[280px] lg:h-[320px] [@media(max-height:500px)]:h-[180px]"
         role="img"
         aria-label={`Trailing ${window} traded volume for the ten competing coins`}
       >
@@ -129,7 +137,12 @@ export function VolumeChart({
           fill={false}
           scrub
           onSeriesToggle={onSeriesToggle}
-          // A finished round is drawn once and held — see `openedAt`.
+          seriesToggleCompact={!roomy}
+          // A finished round is drawn once and held — see `openedAt`. Held means
+          // its data and its clock, not the legend: paused, liveline draws from
+          // a snapshot, so hiding a line is its fade alone, and upstream froze
+          // that fade along with everything else. The patch runs it, and the
+          // axis refit after it, on real time.
           paused={replay}
           window={spanSecs}
           emptyText="collecting…"

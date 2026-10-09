@@ -1,5 +1,5 @@
 import { useQuery } from "@apollo/client/react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { formatCompact, formatCredits } from "../format";
 import { CoinIcon } from "./CoinIcon";
 import { Marquee } from "./Marquee";
@@ -12,7 +12,7 @@ import {
   type Entry,
   type Standing,
 } from "./graphql";
-import { Amount, Button, Chip, cx, Empty, Panel, Seam, type Tone } from "../ui";
+import { Amount, Button, Chip, cx, Empty, IconButton, Panel, Seam, type Tone } from "../ui";
 
 /** Buying, the chips stack: four taps on +25 is a hundred. */
 const STAKES = [5, 25, 100] as const;
@@ -84,6 +84,9 @@ export function BetPanel({
   onPlace,
   onSell,
   selling,
+  bare = false,
+  onClose,
+  onConfirmed,
 }: {
   standing: Standing | null;
   entry: Entry | null;
@@ -114,6 +117,15 @@ export function BetPanel({
   /** Sell part or all of one line's position. */
   onSell: (direction: Direction, stake: number) => void;
   selling: boolean;
+  /**
+   * Drawn without its own case, for a ticket that is already inside one — the
+   * sheet it opens in on a phone. A panel inside a panel is a box in a box.
+   */
+  bare?: boolean;
+  /** Puts a close key on the plate, for a ticket that can be put away. */
+  onClose?: () => void;
+  /** The bought check has played out and the ticket is back. */
+  onConfirmed?: () => void;
 }) {
   const amountId = useId();
   const [side, setSide] = useState<Side>("buy");
@@ -137,9 +149,18 @@ export function BetPanel({
    * not a decision.
    */
   const [confirmed, setConfirmed] = useState<{ stake: number; direction: Direction } | null>(null);
+  // Read when the check finishes rather than subscribed to: a fresh callback
+  // from the parent on every poll would otherwise restart the check's clock.
+  const confirmedDone = useRef(onConfirmed);
+  useEffect(() => {
+    confirmedDone.current = onConfirmed;
+  });
   useEffect(() => {
     if (!confirmed) return;
-    const timer = setTimeout(() => setConfirmed(null), CONFIRM_MS);
+    const timer = setTimeout(() => {
+      setConfirmed(null);
+      confirmedDone.current?.();
+    }, CONFIRM_MS);
     return () => clearTimeout(timer);
   }, [confirmed]);
 
@@ -229,9 +250,12 @@ export function BetPanel({
   const fill = isBuy ? (bought?.cryptoBuyQuote ?? null) : null;
 
   if (!standing || !entry) {
-    return (
+    const empty = <Empty>Pick a coin from the board to place a bet.</Empty>;
+    return bare ? (
+      <section aria-label="Ticket">{empty}</section>
+    ) : (
       <Panel as="section" aria-label="Ticket" className="mb-4">
-        <Empty>Pick a coin from the board to place a bet.</Empty>
+        {empty}
       </Panel>
     );
   }
@@ -270,16 +294,10 @@ export function BetPanel({
         ? `No open position on ${standing.ticker}.`
         : (disabledReason ?? "That line is no longer on the book.");
 
-  return (
-    /*
-      A card, where every other section on the page is flat: this is the one
-      instrument on it you operate rather than read, and it is built the way the
-      dialogs are — a plate across the top saying what it is about, a seam, and
-      the face under it.
-    */
-    <Panel as="section" aria-label="Ticket" className="relative mb-4">
+  const ticket = (
+    <>
       <div inert={confirmed != null} className={cx(confirmed && "casino-confirm-hide")}>
-        <div className="mat-plate px-4 pt-3">
+        <div className="mat-plate px-4 pt-4 sm:pt-3">
           <div className="flex items-center gap-3">
             <CoinIcon ticker={standing.ticker} src={standing.imageUrl} size={40} />
             <div className="min-w-0 flex-1">
@@ -302,6 +320,18 @@ export function BetPanel({
                 <Marquee text={standing.name} className="min-w-0 flex-1 text-sm text-muted" />
               </div>
             </div>
+            {onClose && (
+              <IconButton label="Close ticket" size="md" onClick={onClose} className="self-start">
+                <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true" fill="none">
+                  <path
+                    d="M4 4l8 8M12 4l-8 8"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </IconButton>
+            )}
           </div>
 
           {/* The switch, at the foot of the plate: everything under the seam
@@ -388,6 +418,7 @@ export function BetPanel({
             />
           </div>
 
+          {/* On a phone the keys share the row evenly and stand a thumb tall. */}
           <div className="mt-2.5 flex items-center justify-end gap-1.5">
             {isBuy
               ? STAKES.map((s) => (
@@ -397,7 +428,7 @@ export function BetPanel({
                     disabled={ceiling != null && amount >= ceiling}
                     onClick={() => addAmount(s)}
                     aria-label={`Add $${s}`}
-                    className="min-w-12 font-mono tabular-nums"
+                    className="min-w-12 font-mono tabular-nums max-sm:h-10 max-sm:flex-1"
                   >
                     +${s}
                   </Button>
@@ -409,7 +440,7 @@ export function BetPanel({
                     disabled={position <= 0}
                     onClick={() => setAmount(Math.max(1, Math.floor(position * f)))}
                     aria-label={`Sell ${f * 100}% of the position`}
-                    className="min-w-12 font-mono tabular-nums"
+                    className="min-w-12 font-mono tabular-nums max-sm:h-10 max-sm:flex-1"
                   >
                     {f * 100}%
                   </Button>
@@ -419,7 +450,7 @@ export function BetPanel({
               disabled={!ceiling || amount >= ceiling}
               onClick={() => ceiling != null && setAmount(ceiling)}
               title={isBuy ? "Stake every credit you hold" : "Sell the whole position"}
-              className="min-w-12 font-mono uppercase tabular-nums"
+              className="min-w-12 font-mono uppercase tabular-nums max-sm:h-10 max-sm:flex-1"
             >
               Max
             </Button>
@@ -535,6 +566,22 @@ export function BetPanel({
       <p role="status" className="sr-only">
         {confirmed ? `Bought ${formatCredits(confirmed.stake)} on ${TONE[confirmed.direction].label}.` : ""}
       </p>
+    </>
+  );
+
+  return bare ? (
+    <section aria-label="Ticket" className="relative">
+      {ticket}
+    </section>
+  ) : (
+    /*
+      A card, where every other section on the page is flat: this is the one
+      instrument on it you operate rather than read, and it is built the way the
+      dialogs are — a plate across the top saying what it is about, a seam, and
+      the face under it.
+    */
+    <Panel as="section" aria-label="Ticket" className="relative mb-4">
+      {ticket}
     </Panel>
   );
 }

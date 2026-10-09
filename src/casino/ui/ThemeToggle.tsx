@@ -1,9 +1,16 @@
 import {
+  NEXT_THEME,
   setPreference,
   useThemePreference,
   type ThemePreference,
 } from "../theme";
 import { IconButton } from "./Button";
+
+const NAME: Record<ThemePreference, string> = {
+  auto: "matching the system",
+  light: "light",
+  dark: "dark",
+};
 
 /**
  * One key that cycles: match system → light → dark → match system.
@@ -17,21 +24,9 @@ import { IconButton } from "./Button";
  * pressed anything. A control that can only reach two of its three positions
  * has thrown the third away the first time it is used.
  */
-const NEXT: Record<ThemePreference, ThemePreference> = {
-  auto: "light",
-  light: "dark",
-  dark: "auto",
-};
-
-const NAME: Record<ThemePreference, string> = {
-  auto: "matching the system",
-  light: "light",
-  dark: "dark",
-};
-
 export function ThemeToggle({ className }: { className?: string }) {
   const preference = useThemePreference();
-  const next = NEXT[preference];
+  const next = NEXT_THEME[preference];
 
   return (
     <IconButton
@@ -44,15 +39,14 @@ export function ThemeToggle({ className }: { className?: string }) {
       label={`Theme: ${NAME[preference]}. Switch to ${NAME[next]}.`}
       onClick={() => setPreference(next)}
     >
-      {preference === "light" ? (
-        <SunGlyph />
-      ) : preference === "dark" ? (
-        <MoonGlyph />
-      ) : (
-        <AutoGlyph />
-      )}
+      <ThemeGlyph preference={preference} />
     </IconButton>
   );
+}
+
+/** The state the theme is in, as the key's legend draws it. */
+export function ThemeGlyph({ preference }: { preference: ThemePreference }) {
+  return preference === "light" ? <SunGlyph /> : preference === "dark" ? <MoonGlyph /> : <AutoGlyph />;
 }
 
 /**

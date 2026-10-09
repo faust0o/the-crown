@@ -208,33 +208,50 @@ export function RoundReplay({
     <div className="flex flex-col gap-5">
       <ReplayBar round={round} justEnded={justEnded} onExit={onExit} />
 
-      <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
-        <div className="flex min-w-0 flex-col gap-5">
-          {chartHistory.length ? (
-            // Keyed so picking another round from the list remounts it: a
-            // paused chart holds the data it first drew, and its clock with it.
-            <VolumeChart
-              key={round.id}
-              title={stats}
-              history={chartHistory}
-              standings={asStandings}
-              window="round"
-              replay
-            />
-          ) : (
-            <Section title={stats}>
-              <Empty>
-                {loading ? "loading the round…" : "No samples were recorded for this round."}
-              </Empty>
-            </Section>
-          )}
-          <FinalBoard entries={finished} meta={meta} cutVolume={cutVolume} />
+      {/*
+        Two columns where there is room. Narrower, the columns dissolve
+        (`contents`) and their sections stack in the order a phone wants them:
+        how the round ended first — the reason anyone opens a replay — then the
+        race that got there, then the player's own fills. The flow is left out
+        there: it is the same rank changes the final board already states.
+      */}
+      <div className="flex flex-col gap-5 lg:grid lg:grid-cols-[1fr_320px]">
+        <div className="contents lg:flex lg:min-w-0 lg:flex-col lg:gap-5">
+          <div className="min-w-0 max-lg:order-2">
+            {chartHistory.length ? (
+              // Keyed so picking another round from the list remounts it: a
+              // paused chart holds the data it first drew, and its clock with it.
+              <VolumeChart
+                key={round.id}
+                title={stats}
+                history={chartHistory}
+                standings={asStandings}
+                window="round"
+                replay
+              />
+            ) : (
+              <Section title={stats}>
+                <Empty>
+                  {loading ? "loading the round…" : "No samples were recorded for this round."}
+                </Empty>
+              </Section>
+            )}
+          </div>
+          <div className="min-w-0 max-lg:order-3">
+            <FinalBoard entries={finished} meta={meta} cutVolume={cutVolume} />
+          </div>
         </div>
 
-        <div className="flex min-w-0 flex-col gap-5">
-          <Resolution round={round} bets={bets} meta={meta} cutVolume={cutVolume} />
-          <TxLog bets={bets} meta={meta} />
-          <FlowFeed events={flow} note="replay" />
+        <div className="contents lg:flex lg:min-w-0 lg:flex-col lg:gap-5">
+          <div className="min-w-0 max-lg:order-1">
+            <Resolution round={round} bets={bets} meta={meta} cutVolume={cutVolume} />
+          </div>
+          <div className="min-w-0 max-lg:order-4">
+            <TxLog bets={bets} meta={meta} />
+          </div>
+          <div className="min-w-0 max-lg:hidden">
+            <FlowFeed events={flow} note="replay" />
+          </div>
         </div>
       </div>
     </div>
@@ -256,13 +273,18 @@ function ReplayBar({
       <span className="font-mono text-sm tabular-nums text-foreground">
         {hhmm(round.startsAt)} – {hhmm(round.endsAt)}
       </span>
-      <span className="text-xs text-muted">
+      {/* Said once, where there is room to. On a phone the tag already says it,
+          and the sentence took three lines above the thing it described. */}
+      <span className="text-xs text-muted max-sm:hidden">
         {justEnded
           ? "That round just settled — here is how it finished. The next one is already running."
           : "This round is over — the board below is where it finished, and nothing on it can be backed."}
       </span>
       <Button size="sm" onClick={onExit} className="ml-auto">
-        {justEnded ? "Go to the new round" : "Back to the live round"}
+        <span className="sm:hidden">{justEnded ? "New round" : "Back to live"}</span>
+        <span className="max-sm:hidden">
+          {justEnded ? "Go to the new round" : "Back to the live round"}
+        </span>
       </Button>
     </div>
   );
@@ -290,7 +312,7 @@ export function RoundOverBar({
   return (
     <div className="casino-animate-in flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-hairline pb-3">
       <Tag tone="gold">round over</Tag>
-      <span className="font-mono text-sm tabular-nums text-foreground">
+      <span className="font-mono text-sm tabular-nums text-foreground max-sm:hidden">
         {hhmm(round.startsAt)} – {hhmm(round.endsAt)}
       </span>
       {winner ? (
@@ -303,7 +325,8 @@ export function RoundOverBar({
       )}
       <span className="ml-auto flex items-center gap-2">
         <Button size="sm" onClick={onOpen}>
-          See how it finished
+          <span className="sm:hidden">Replay</span>
+          <span className="max-sm:hidden">See how it finished</span>
         </Button>
         <IconButton label="Dismiss" size="sm" onClick={onDismiss}>
           <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true" fill="none">
@@ -358,8 +381,7 @@ function FinalBoard({
           return (
             <li
               key={e.symbol}
-              className="grid items-center gap-3 border-b border-[var(--bevel-lo)] px-4 py-2.5 last:border-b-0"
-              style={{ gridTemplateColumns: "24px 12px 28px minmax(0,1fr) 76px" }}
+              className="grid grid-cols-[20px_12px_28px_minmax(0,1fr)_64px] items-center gap-2 border-b border-[var(--bevel-lo)] px-1.5 py-2.5 last:border-b-0 sm:grid-cols-[24px_12px_28px_minmax(0,1fr)_76px] sm:gap-3 sm:px-4"
             >
               <span className="grid place-items-center font-mono text-lg tabular-nums leading-none text-muted">
                 {dropped ? "—" : (e.cutRank ?? "—")}
@@ -390,9 +412,8 @@ function FinalBoard({
                 </span>
               </span>
               <span
-                className="justify-self-end rounded-md border px-2 py-1 text-center text-[10px] font-semibold uppercase tracking-wide"
+                className="w-full justify-self-end rounded-md border px-1 py-1 text-center text-[10px] font-semibold uppercase tracking-wide sm:px-2"
                 style={{
-                  minWidth: 74,
                   color: outcome ? TONE[outcome].color : "var(--text-muted)",
                   borderColor: outcome
                     ? `color-mix(in oklch, ${TONE[outcome].color} 35%, transparent)`
@@ -432,7 +453,9 @@ function Resolution({
   const net = returned - staked;
 
   return (
-    <Section title="Resolution">
+    // Uncaptioned: the winner's line at its top already says what it is. Still
+    // named for a screen reader, which has no line to read it from.
+    <section aria-label="Resolution" className="mb-4 flex min-w-0 flex-col">
       <div className="flex items-center gap-3 border-b border-hairline pb-3">
         {winner ? (
           <>
@@ -512,7 +535,7 @@ function Resolution({
           <p className="m-0 text-xs text-muted">You had no positions in this round.</p>
         )}
       </div>
-    </Section>
+    </section>
   );
 }
 

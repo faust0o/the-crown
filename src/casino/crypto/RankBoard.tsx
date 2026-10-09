@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { formatCompact } from "../format";
-import { Chip, Section, type Tone } from "../ui";
+import { Chip, Section, TONE_COLOR, type Tone } from "../ui";
 import { CoinIcon } from "./CoinIcon";
 import { formatPrice } from "./format";
 import type { Direction, Entry, Line, Standing } from "./graphql";
 
-const ROW_H = 76; // px — rows are absolutely positioned so reordering can animate
+/**
+ * A row's pitch. Rows are absolutely positioned so reordering can animate, so
+ * the list has to know how tall each one is — and it is a CSS variable rather
+ * than a constant because a phone's rows are shorter: their chips carry a price
+ * and no caption, the captions standing once over the columns instead.
+ */
+const ROW_H = "var(--row-h)";
 
 const TONE: Record<Direction, { label: string; tone: Tone }> = {
   HIGHER: { label: "Higher", tone: "up" },
@@ -48,9 +54,29 @@ export function RankBoard({
         </span>
       }
     >
+      {/*
+        What to do with the board, wherever the ticket is not on screen beside
+        it to say so — and on a phone, what the columns are. Each chip there is
+        only its price (three captions per row, ten rows deep, was most of the
+        board's width), so the captions stand once, over the columns.
+      */}
+      <div aria-hidden="true" className="mb-1 flex items-center gap-2 px-1.5 lg:hidden">
+        <span className="min-w-0 flex-1 truncate text-[11px] text-muted">Tap a price to bet</span>
+        <span className="flex shrink-0 gap-1 sm:hidden">
+          {(["HIGHER", "DRAW", "LOWER"] as const).map((d) => (
+            <span
+              key={d}
+              className="w-[52px] text-center text-[10px] font-semibold uppercase tracking-wide"
+              style={{ color: TONE_COLOR[TONE[d].tone] }}
+            >
+              {TONE[d].label}
+            </span>
+          ))}
+        </span>
+      </div>
       <ol
-        className="relative m-0 list-none p-0"
-        style={{ height: standings.length * ROW_H + 8 }}
+        className="relative m-0 list-none p-0 [--row-h:58px] sm:[--row-h:76px]"
+        style={{ height: `calc(${ROW_H} * ${standings.length} + 8px)` }}
       >
         {standings.map((s, slot) => (
           <RankRow
@@ -116,7 +142,7 @@ function RankRow({
             }
           : undefined
       }
-      className={`absolute inset-x-0 flex items-center gap-3 overflow-hidden rounded-lg px-2 ${
+      className={`absolute inset-x-0 flex items-center gap-2 overflow-hidden rounded-lg px-1.5 sm:gap-3 sm:px-2 ${
         selected
           ? "mat-row-on cursor-pointer"
           : selectable
@@ -124,8 +150,8 @@ function RankRow({
             : ""
       }`}
       style={{
-        height: ROW_H - 4,
-        transform: `translateY(${slot * ROW_H}px)`,
+        height: `calc(${ROW_H} - 4px)`,
+        transform: `translateY(calc(${ROW_H} * ${slot}))`,
         backgroundColor:
           moved === "up"
             ? "color-mix(in oklch, var(--up) 14%, transparent)"
@@ -141,7 +167,7 @@ function RankRow({
           digit's, so right-aligning both left the crown off the number column.
           Centring the box aligns "1", "10" and the crown alike. */}
       <span
-        className="grid w-6 shrink-0 place-items-center font-mono text-lg tabular-nums leading-none text-muted"
+        className="grid w-5 shrink-0 place-items-center font-mono text-base tabular-nums leading-none text-muted sm:w-6 sm:text-lg"
         title={entry?.isCrown ? "Wearing the crown" : undefined}
       >
         {entry?.isCrown ? (
@@ -159,24 +185,36 @@ function RankRow({
       >
         {delta > 0 ? "▲" : delta < 0 ? "▼" : "•"}
       </span>
-      <CoinIcon ticker={s.ticker} src={s.imageUrl} size={28} />
+      {/* The logo is the first thing the narrowest phones give up: it says what
+          the ticker beside it says, and the ticker is what gets read. */}
+      <span className="shrink-0 max-[359px]:hidden">
+        <CoinIcon ticker={s.ticker} src={s.imageUrl} size={28} />
+      </span>
 
       <span className="min-w-0 flex-1">
-        <span className="block truncate font-semibold text-foreground">{s.ticker}</span>
+        <span className="block truncate text-sm font-semibold text-foreground sm:text-base">
+          {s.ticker}
+        </span>
+        {/* The price is the one figure on the row the race is not about, so it
+            is the one a phone does without. */}
         <span className="block truncate font-mono text-[11px] tabular-nums text-muted">
-          ${formatCompact(s.quoteVolume)} · {formatPrice(s.price)}
+          ${formatCompact(s.quoteVolume)}
+          <span className="max-sm:hidden"> · {formatPrice(s.price)}</span>
         </span>
       </span>
 
-      <span className="flex shrink-0 items-center gap-1.5">
+      <span className="flex shrink-0 items-center gap-1 sm:gap-1.5">
         {!entry ? (
-          <span className="w-[234px] shrink-0 text-right text-[11px] leading-tight text-muted">
-            Climbed onto the board after this round opened — in from the next one.
+          <span className="w-[164px] shrink-0 text-right text-[11px] leading-tight text-muted sm:w-[234px]">
+            <span className="sm:hidden">In from the next round</span>
+            <span className="max-sm:hidden">
+              Climbed onto the board after this round opened — in from the next one.
+            </span>
           </span>
         ) : entry.isCrown ? (
           <span
             title="Wearing the crown — the reigning token can't be backed. Win it by finishing first."
-            className="w-[234px] shrink-0 cursor-help text-right text-[11px] text-muted"
+            className="w-[164px] shrink-0 cursor-help text-right text-[11px] text-muted sm:w-[234px]"
           >
             crown — no book
           </span>
@@ -224,18 +262,28 @@ function PriceChip({
           ? `${tone.label} — ${line.cents}¢, pays ${line.multiplier.toFixed(2)}x`
           : `${tone.label} is impossible from this rank`
       }
-      className="w-[74px] shrink-0 px-2 py-1.5"
+      // Named in full, because on a phone the caption is not drawn on the chip.
+      aria-label={
+        line.available
+          ? `${tone.label}, ${line.cents}¢, pays ${line.multiplier.toFixed(2)}x`
+          : `${tone.label}, unavailable`
+      }
+      className="w-[52px] shrink-0 px-1 py-2 max-sm:text-center sm:w-[74px] sm:px-2 sm:py-1.5"
     >
+      {/* Captioned per chip only where there is room; a phone captions the
+          columns once, over the board. */}
       <span
-        className="block text-[10px] font-semibold uppercase tracking-wide"
+        className="block text-[10px] font-semibold uppercase tracking-wide max-sm:hidden"
         style={{ color: "var(--tone)" }}
       >
         {tone.label}
       </span>
-      <span className="block font-mono text-xs tabular-nums text-foreground">
+      <span className="block font-mono text-sm tabular-nums text-foreground sm:text-xs">
         {line.available ? `${line.cents}¢` : "—"}
         {line.available && (
-          <span className="ml-1 text-[10px] text-muted">{line.multiplier.toFixed(1)}x</span>
+          <span className="ml-1 text-[10px] text-muted max-sm:hidden">
+            {line.multiplier.toFixed(1)}x
+          </span>
         )}
       </span>
     </Chip>

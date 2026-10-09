@@ -1,8 +1,10 @@
 import { useMutation, useQuery } from "@apollo/client/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMediaQuery, WIDE } from "../hooks/useMediaQuery";
 import { SessionProvider, useSession } from "../session/SessionProvider";
 import {
   Button,
+  Dialog,
   Empty,
   IconButton,
   Panel,
@@ -25,6 +27,7 @@ import {
   type RoundResult,
   type Standing,
 } from "./graphql";
+import { HeaderMenu, type Tab } from "./HeaderMenu";
 import { HowItWorks } from "./HowItWorks";
 import { Portfolio } from "./Portfolio";
 import { PreviousRounds } from "./PreviousRounds";
@@ -38,12 +41,14 @@ import { SignInButton, WalletButton } from "./WalletButton";
 /** Matches the oracle's own re-rank cadence — no point polling faster. */
 const POLL_MS = 2_000;
 
-type Tab = "board" | "portfolio";
-
 const TABS = [
   { value: "board", label: "Board" },
   { value: "portfolio", label: "Portfolio" },
 ] as const satisfies readonly { value: Tab; label: string }[];
+
+/** The balance as the header prints it: a figure cut into the case. */
+const BALANCE =
+  "mat-inset mat-engrave shrink-0 rounded-md px-2.5 py-1 font-mono text-sm tabular-nums text-foreground";
 
 /** Set the document title while this page is mounted, restoring it on exit. */
 function useTitle(title: string) {
@@ -207,6 +212,18 @@ function CrownInner() {
   const [direction, setDirection] = useState<Direction>("HIGHER");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  /**
+   * Wide enough for the ticket to stand beside the board.
+   *
+   * Below that it is a sheet over the board, raised by picking a coin. It used
+   * to stack under the board instead — under a chart and ten rows, a long
+   * scroll from the price that was tapped to the key that buys it.
+   */
+  const wide = useMediaQuery(WIDE);
+  const [ticketOpen, setTicketOpen] = useState(false);
+  // A sheet left up while the screen widened (a tablet turned on its side)
+  // would come back by itself the next time it narrowed.
+  if (wide && ticketOpen) setTicketOpen(false);
 
   const { data, loading, error, refetch } = useQuery(BOARD, {
     // Ask for the full buffer, not just this round: the chart should always
@@ -451,9 +468,17 @@ function CrownInner() {
       if (!bettable(symbol)) return;
       setSelected(symbol);
       if (dir) setDirection(dir);
+      if (!wide) setTicketOpen(true);
     },
-    [bettable]
+    [bettable, wide]
   );
+
+  /** Back to the live board, from a replay or the portfolio. */
+  const goHome = useCallback(() => {
+    setTab("board");
+    exitReplay();
+    window.scrollTo({ top: 0 });
+  }, [exitReplay]);
 
   /**
    * Place the ticket. Resolves true only if the bet went through.
@@ -514,6 +539,42 @@ function CrownInner() {
     [sellPosition, activeSymbol, refetch]
   );
 
+  /** The oracle is behind — the one thing the flow feed says that a phone still needs. */
+  const feedStatus = error ? "error" : status?.status;
+  const oracleDown = feedStatus === "error" || feedStatus === "degraded";
+
+  /*
+    Always up for a visitor; withheld from an account with nothing to spend —
+    see `charged`.
+
+    Those look like the same case and are opposites. A signed-in player with no
+    balance and no position has already been let in and has nothing the panel
+    can do for them: every control is live, the stake chips add up, and the
+    only thing that says it will not work is a refusal on the key at the end.
+    Withholding it puts what they need next — the wallet — directly under the
+    board.
+
+    A signed-out visitor is the reverse. The prices are the product, composing
+    a bet is how they decide they want one, and the Buy key is the door. Hiding
+    the ticket hid the entire reason to sign in behind having signed in.
+  */
+  const tradable = !user || charged;
+  const ticketProps = {
+    standing: activeStanding,
+    entry: activeEntry,
+    bets: activeBets,
+    roundOpen: open,
+    signedIn: Boolean(user),
+    disabledReason,
+    direction,
+    onDirection: setDirection,
+    busy,
+    credits,
+    onPlace,
+    onSell: onSellPosition,
+    selling,
+  };
+
   return (
     <div className="casino flex min-h-dvh flex-col">
       {/*
@@ -524,10 +585,21 @@ function CrownInner() {
       */}
       <header
         ref={headerRef}
-        className="mat-panel-flush mat-grain sticky top-0 z-30 rounded-none border-x-0 border-t-0"
+        className="mat-panel-flush mat-grain sticky top-0 z-30 rounded-none border-x-0 border-t-0 pt-[env(safe-area-inset-top)]"
       >
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 px-6 py-3">
-          <a href="/" className="flex items-center gap-2.5 no-underline">
+        <div className="casino-gutter mx-auto flex max-w-6xl items-center gap-x-3 py-2 sm:gap-x-4 lg:py-3">
+          {/* Home is the live board, not a reload: on a phone this is the way
+              back from the portfolio or a replay. A modified click still opens
+              a new tab, which is what the href is for. */}
+          <a
+            href="/"
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+              e.preventDefault();
+              goHome();
+            }}
+            className="flex shrink-0 items-center gap-2.5 no-underline"
+          >
             <img
               src="/crown-icon.svg"
               alt=""
@@ -536,19 +608,21 @@ function CrownInner() {
               height={28}
               className="h-7 w-7 shrink-0 rounded"
             />
-            <span className="flex flex-col leading-tight">
-              <span className="mat-engrave text-lg font-semibold text-foreground">
-                The Crown
-              </span>
+            {/* A phone's header is the clock's and the balance's; the mark
+                alone says whose it is. */}
+            <span className="mat-engrave text-lg leading-tight font-semibold text-foreground max-sm:sr-only">
+              The Crown
             </span>
           </a>
 
+          {/* On a phone these are in the menu — see `HeaderMenu`. */}
           <Segmented
             tabs
             label="Section"
             value={tab}
             onChange={setTab}
             options={TABS}
+            className="max-sm:hidden"
           />
 
           {/*
@@ -558,15 +632,15 @@ function CrownInner() {
           */}
           <RoundClock round={round} />
 
-          <div className="ml-auto flex items-center gap-3">
-            <Button
-              variant="ghost"
-              onClick={() => setPastOpen(true)}
-              className="hidden text-xs sm:block"
-            >
-              Previous rounds
-            </Button>
-            <ThemeToggle />
+          <div className="ml-auto flex shrink-0 items-center gap-2 lg:gap-3">
+            {wide && (
+              <>
+                <Button variant="ghost" onClick={() => setPastOpen(true)} className="text-xs">
+                  Previous rounds
+                </Button>
+                <ThemeToggle />
+              </>
+            )}
             {/*
               Signed out, exactly one door — and now it is the wallet.
 
@@ -578,35 +652,58 @@ function CrownInner() {
             */}
             {user ? (
               <>
-                <WalletButton />
+                {wide && <WalletButton />}
                 {/* Just the balance. Leaving is an account action and lives in
-                    the account menu beside it — see `WalletButton`. */}
-                <span className="mat-inset mat-engrave rounded-md px-2.5 py-1 font-mono text-sm tabular-nums text-foreground">
-                  {(credits ?? 0).toLocaleString()}
-                  <span className="ml-1 text-muted">cr</span>
-                </span>
+                    the account menu beside it — see `WalletButton`. Narrower,
+                    the balance is also the way to the portfolio, the page
+                    about it, whose tab a phone keeps in the menu. */}
+                {wide ? (
+                  <span className={BALANCE}>
+                    {(credits ?? 0).toLocaleString()}
+                    <span className="ml-1 text-muted">cr</span>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setTab("portfolio")}
+                    aria-label={`${(credits ?? 0).toLocaleString()} credits — open portfolio`}
+                    className={`${BALANCE} active:opacity-80`}
+                  >
+                    {(credits ?? 0).toLocaleString()}
+                    <span className="ml-1 text-muted">cr</span>
+                  </button>
+                )}
               </>
             ) : (
               <SignInButton />
             )}
-            <IconButton label="How it works" size="sm" onClick={() => setHowOpen(true)}>
-              <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" aria-hidden="true" fill="none">
-                <circle cx="12" cy="12" r="9.25" stroke="currentColor" strokeWidth="1.5" />
-                <path
-                  d="M9.6 9.2a2.5 2.5 0 1 1 3.2 2.4c-.6.2-.9.7-.9 1.3v.5"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                />
-                <circle cx="11.9" cy="16.4" r="0.95" fill="currentColor" />
-              </svg>
-            </IconButton>
+            {wide ? (
+              <IconButton label="How it works" size="sm" onClick={() => setHowOpen(true)}>
+                <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" aria-hidden="true" fill="none">
+                  <circle cx="12" cy="12" r="9.25" stroke="currentColor" strokeWidth="1.5" />
+                  <path
+                    d="M9.6 9.2a2.5 2.5 0 1 1 3.2 2.4c-.6.2-.9.7-.9 1.3v.5"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                  />
+                  <circle cx="11.9" cy="16.4" r="0.95" fill="currentColor" />
+                </svg>
+              </IconButton>
+            ) : (
+              <HeaderMenu
+                tab={tab}
+                onTab={setTab}
+                onPreviousRounds={() => setPastOpen(true)}
+                onHowItWorks={() => setHowOpen(true)}
+              />
+            )}
           </div>
         </div>
         <Rail groove />
       </header>
 
-      <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-5">
+      <main className="casino-gutter mx-auto w-full max-w-6xl flex-1 py-4 sm:py-5">
         {tab === "portfolio" ? (
           <Portfolio bets={allBets} credits={credits} standings={standings} />
         ) : replay ? (
@@ -653,6 +750,10 @@ function CrownInner() {
             */}
             <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
               <div className="flex min-w-0 flex-col gap-5 lg:pb-[max(0px,calc(var(--column-h,0px)+var(--header-h,0px)+3rem-100dvh))]">
+                {/* The flow feed's warning, for a screen without the feed. */}
+                {!wide && oracleDown && (
+                  <p className="m-0 -mb-2 text-[11px] text-down">oracle down — the board may be stale</p>
+                )}
                 <VolumeChart
                   title={<GameStats movers={movers} />}
                   history={data?.cryptoRankHistory ?? []}
@@ -673,46 +774,22 @@ function CrownInner() {
                 )}
               </div>
 
-              <div
-                ref={columnRef}
-                className="flex min-w-0 flex-col gap-5 lg:sticky lg:top-[calc(var(--header-h,0px)+1.25rem)] lg:self-start"
-              >
-                {/*
-                  Always up for a visitor; withheld from an account with nothing
-                  to spend — see `charged`.
-
-                  Those look like the same case and are opposites. A signed-in
-                  player with no balance and no position has already been let in
-                  and has nothing the panel can do for them: every control is
-                  live, the stake chips add up, and the only thing that says it
-                  will not work is a refusal on the key at the end. Withholding it
-                  puts what they need next — the wallet — directly under the
-                  board.
-
-                  A signed-out visitor is the reverse. The prices are the product,
-                  composing a bet is how they decide they want one, and the Buy key
-                  is the door. Hiding the ticket hid the entire reason to sign in
-                  behind having signed in.
-                */}
-                {(!user || charged) && (
-                  <BetPanel
-                    standing={activeStanding}
-                    entry={activeEntry}
-                    bets={activeBets}
-                    roundOpen={open}
-                    signedIn={Boolean(user)}
-                    disabledReason={disabledReason}
-                    direction={direction}
-                    onDirection={setDirection}
-                    busy={busy}
-                    credits={credits}
-                    onPlace={onPlace}
-                    onSell={onSellPosition}
-                    selling={selling}
-                  />
-                )}
-                <FlowFeed events={roundFlow} status={error ? "error" : status?.status} />
-              </div>
+              {/*
+                The ticket's column, beside the board — only where there is room
+                for one. Narrower, the ticket is a sheet (below) and the flow
+                feed is left out: it lists the rank changes the board is already
+                animating, and under the board it was half a screen of
+                repetition on the way to nothing.
+              */}
+              {wide && (
+                <div
+                  ref={columnRef}
+                  className="flex min-w-0 flex-col gap-5 lg:sticky lg:top-[calc(var(--header-h,0px)+1.25rem)] lg:self-start"
+                >
+                  {tradable && <BetPanel {...ticketProps} />}
+                  <FlowFeed events={roundFlow} status={feedStatus} />
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -722,6 +799,44 @@ function CrownInner() {
           its "play money" note lives in How it works, which is where someone
           asking what the credits are will actually be looking. */}
       <Rail groove className="mt-auto" />
+
+      {/*
+        The ticket, raised over the board by picking a coin on it. Before the
+        other dialogs, so that the wallet picker the Buy key can open while
+        signed out lands on top of it.
+      */}
+      {!wide && (
+        <Dialog open={ticketOpen} onClose={() => setTicketOpen(false)} label="Ticket" bodyClassName="p-0">
+          {tradable ? (
+            <BetPanel
+              {...ticketProps}
+              bare
+              onClose={() => setTicketOpen(false)}
+              // Back to the board once the check has played: the bet is in,
+              // and the board is where it will be seen to move.
+              onConfirmed={() => setTicketOpen(false)}
+            />
+          ) : (
+            <div className="px-5 pt-8 pb-5 text-center">
+              <p className="m-0 text-sm font-semibold text-foreground">No credits to bet with</p>
+              <p className="m-0 mt-1 text-xs text-muted">Swap SOL for credits to start betting.</p>
+              <Button
+                variant="glass"
+                side="buy"
+                size="lg"
+                block
+                className="mt-5"
+                onClick={() => {
+                  setTicketOpen(false);
+                  setTab("portfolio");
+                }}
+              >
+                Add credits
+              </Button>
+            </div>
+          )}
+        </Dialog>
+      )}
 
       <PreviousRounds
         open={pastOpen}
@@ -737,10 +852,12 @@ function CrownInner() {
       <HowItWorks open={howOpen} onClose={() => setHowOpen(false)} />
       {picker}
 
+      {/* Over any sheet: the ticket's failures are reported here, and on a
+          phone the ticket is a sheet. */}
       {toast && (
         <Panel
           role="status"
-          className="casino-animate-in fixed bottom-6 left-1/2 z-40 -translate-x-1/2 px-4 py-2 text-sm text-foreground"
+          className="casino-animate-in fixed bottom-[calc(1.5rem+env(safe-area-inset-bottom))] left-1/2 z-[70] w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 px-4 py-2 text-center text-sm text-foreground"
         >
           {toast}
         </Panel>

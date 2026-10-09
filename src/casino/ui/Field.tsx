@@ -1,12 +1,17 @@
 import type { ComponentProps, ReactNode } from "react";
 import { cx } from "./cx";
 
-/** A value typed into a well cut in the face. */
+/**
+ * A value typed into a well cut in the face.
+ *
+ * 16px on a phone: iOS zooms the whole page into any field set smaller than
+ * that the moment it is focused, and leaves it zoomed after.
+ */
 export function Input({ className, ...rest }: ComponentProps<"input">) {
   return (
     <input
       className={cx(
-        "mat-inset w-full rounded-md px-3 py-2 text-sm text-foreground outline-none",
+        "mat-inset w-full rounded-md px-3 py-2 text-base text-foreground outline-none sm:text-sm",
         "placeholder:text-muted",
         className
       )}
