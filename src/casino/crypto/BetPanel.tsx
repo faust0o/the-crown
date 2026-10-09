@@ -208,7 +208,8 @@ export function BetPanel({
       ? null
       : Math.max(0, Math.floor(credits))
     : position;
-  const amount = isBuy ? stake : Math.min(sellInput ?? position, position);
+  const sellAmount = Math.min(sellInput ?? position, position);
+  const amount = isBuy ? stake : sellAmount;
   const setAmount = (n: number) =>
     isBuy ? setStake(n) : setSellInput(ceiling == null ? n : Math.min(n, ceiling));
   const addAmount = (n: number) => setAmount(ceiling == null ? amount + n : Math.min(amount + n, ceiling));
@@ -222,9 +223,13 @@ export function BetPanel({
    * against a size-aware payout, and the number on the screen was reliably the
    * kinder of the two.
    */
+  //
+  // Asked for on the Buy side as well, whenever there is a position to sell:
+  // the Sell tab used to send for its price only once it was pressed, so it
+  // opened on a dead key and a dash, and lit up a round trip later.
   const { data: quoted, loading: pricing } = useQuery(SELL_QUOTE, {
-    variables: { symbol: standing?.symbol ?? "", direction: sellDirection, stake: amount },
-    skip: isBuy || !standing || amount <= 0,
+    variables: { symbol: standing?.symbol ?? "", direction: sellDirection, stake: sellAmount },
+    skip: !standing || sellAmount <= 0,
     pollInterval: POLL_MS,
     fetchPolicy: "cache-and-network",
     errorPolicy: "all",
@@ -248,6 +253,13 @@ export function BetPanel({
   });
   const fill = isBuy ? (bought?.cryptoBuyQuote ?? null) : null;
 
+  // What the ticket shows, as against what it acts on: the last price stays up
+  // through the refetch a new stake or outcome sets off, rather than blinking
+  // to a dash and back on every press — see `useHeldQuote`.
+  const coin = standing?.symbol ?? "";
+  const shownFill = useHeldQuote(fill, isBuy && quoting, coin, amount);
+  const shownSale = useHeldQuote(sale, !isBuy && pricing, coin, amount);
+
   if (!standing || !entry) {
     const empty = <Empty>Pick a coin from the board to place a bet.</Empty>;
     return bare ? (
@@ -270,11 +282,20 @@ export function BetPanel({
     roundOpen &&
     !busy &&
     Boolean(line?.available) &&
-    fill != null &&
+    // Lit while the price is on its way, rather than going dark for the round
+    // trip every time the ticket changes. The press still waits for it — see
+    // the key's handler.
+    (fill != null || quoting) &&
     amount > 0 &&
     (!signedIn || (credits ?? 0) >= amount);
   const canSell =
-    signedIn && roundOpen && !selling && amount > 0 && position > 0 && sale != null;
+    signedIn &&
+    roundOpen &&
+    !selling &&
+    amount > 0 &&
+    position > 0 &&
+    // Lit through a re-price, as the buy key is.
+    (sale != null || pricing);
   const ready = isBuy ? canPlace : canSell;
 
   /** Why the key is dark. Never a guess: the round, the amount, the balance, the book, in that order. */
@@ -472,18 +493,30 @@ export function BetPanel({
                 // The multiplier the stake actually fills at, and nothing else.
                 // It used to say the average fill against the board's price as
                 // well, which explained the number by making it harder to read.
-                // Blank until quoted rather than the board's figure, which a
-                // big stake would then visibly walk away from.
-                detail={fill ? `${(fill.payout / amount).toFixed(2)}x` : "\u00a0"}
-                value={fill ? formatCredits(fill.payout) : "—"}
+                // Blank until first quoted rather than the board's figure,
+                // which a big stake would then visibly walk away from.
+                detail={
+                  shownFill
+                    ? `${(shownFill.quote.payout / shownFill.stake).toFixed(2)}x`
+                    : "\u00a0"
+                }
+                value={shownFill ? formatCredits(shownFill.quote.payout) : "—"}
                 color="var(--up)"
               />
             )
           ) : (
             <Payout
               label="You receive"
-              detail={sale ? `price ${sale.cents}¢ · ${formatSigned(sale.payout - sale.sold)}` : "no bid"}
-              value={sale ? formatCredits(sale.payout) : "—"}
+              detail={
+                shownSale
+                  ? `price ${shownSale.quote.cents}¢ · ${formatSigned(shownSale.quote.payout - shownSale.quote.sold)}`
+                  : // "no bid" is a claim about the book; while it is being
+                    // asked, the line holds its place and says nothing.
+                    pricing
+                    ? "\u00a0"
+                    : "no bid"
+              }
+              value={shownSale ? formatCredits(shownSale.quote.payout) : "—"}
               color="var(--sell-ink)"
             />
           )}
@@ -492,6 +525,10 @@ export function BetPanel({
               buying and amber selling — the same lamp, and which colour it is is
               the whole statement about which way the money goes. */}
           <Button
+            // A key per side, so changing sides swaps the lamp rather than
+            // easing one into the other: the glass's glow transition is for a
+            // hover, and across sides it left a blue halo on the amber key.
+            key={side}
             variant="glass"
             side={isBuy ? "buy" : "sell"}
             size="lg"
@@ -510,6 +547,8 @@ export function BetPanel({
                   setConfirmed({ stake: amount, direction });
                 });
               } else {
+                // Never on a price the player has not been shown.
+                if (!sale) return;
                 onSell(sellDirection, amount);
                 setSellInput(null);
               }
@@ -611,14 +650,23 @@ function SideTabs({ value, onChange }: { value: Side; onChange: (side: Side) => 
             aria-selected={on}
             onClick={() => onChange(s.value)}
             className={cx(
-              "border-b-2 bg-transparent px-0 pt-0.5 pb-2 text-sm transition-colors",
+              // The legend eases on hover; the underline moves at once, so the
+              // two sides never both look chosen.
+              "border-b-2 bg-transparent px-0 pt-0.5 pb-2 text-sm transition-[color]",
               on
                 ? "mat-engrave font-semibold text-foreground"
                 : "border-transparent text-muted hover:text-foreground"
             )}
             style={on ? { borderColor: s.value === "buy" ? "var(--buy-ink)" : "var(--sell-ink)" } : undefined}
           >
-            {s.label}
+            {/* Each tab is as wide as its bold self, chosen or not, so the weight
+                changing hands does not shift the other one sideways. */}
+            <span className="grid">
+              <span className="col-start-1 row-start-1">{s.label}</span>
+              <span aria-hidden="true" className="invisible col-start-1 row-start-1 font-semibold">
+                {s.label}
+              </span>
+            </span>
           </button>
         );
       })}
@@ -649,6 +697,34 @@ function Payout({
       </span>
     </div>
   );
+}
+
+/**
+ * A quote, held on screen through the refetch that changing the ticket sets off.
+ *
+ * Every change to the stake, the outcome or the side is a new question for the
+ * server, and until it answers the query has nothing — so the payout blinked to
+ * a dash and the key went dark and lit again on every press. This keeps the
+ * last answer up while the next is `loading`, and only for the same coin: a
+ * different coin is a different ticket, and its price is not this one's.
+ *
+ * Display only. Placing a bet still waits for the quote that matches the ticket,
+ * which is the one the server is told to honour. `stake` is the amount the held
+ * quote was asked for, so a multiplier drawn from it stays its own.
+ */
+function useHeldQuote<T>(
+  quote: T | null,
+  loading: boolean,
+  coin: string,
+  stake: number
+): { quote: T; stake: number } | null {
+  const [held, setHeld] = useState<{ quote: T; coin: string; stake: number } | null>(null);
+  // Adjusted during render, so the held price is never a frame behind.
+  if (quote != null && (held?.quote !== quote || held.coin !== coin)) {
+    setHeld({ quote, coin, stake });
+  }
+  if (quote != null) return { quote, stake };
+  return loading && held?.coin === coin ? { quote: held.quote, stake: held.stake } : null;
 }
 
 /** A gain or a loss on a sale, against what the credits sold cost. */
