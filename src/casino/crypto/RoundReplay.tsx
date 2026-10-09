@@ -2,7 +2,7 @@ import { useQuery } from "@apollo/client/react";
 import { useMemo } from "react";
 import { formatCompact } from "../format";
 import { Button, Empty, IconButton, Section, Tag } from "../ui";
-import { CoinIcon } from "./CoinIcon";
+import { CoinIcon, MoveArrow, RankedCoin } from "./CoinIcon";
 import { FlowFeed } from "./FlowFeed";
 import { GameStats, type Mover } from "./GameStats";
 import {
@@ -381,29 +381,20 @@ function FinalBoard({
           return (
             <li
               key={e.symbol}
-              className="grid grid-cols-[20px_12px_28px_minmax(0,1fr)_64px] items-center gap-2 border-b border-[var(--bevel-lo)] px-1.5 py-2.5 last:border-b-0 sm:grid-cols-[24px_12px_28px_minmax(0,1fr)_76px] sm:gap-3 sm:px-4"
+              className="grid grid-cols-[28px_minmax(0,1fr)_64px] items-center gap-2.5 border-b border-[var(--bevel-lo)] px-2 py-2.5 last:border-b-0 sm:grid-cols-[28px_minmax(0,1fr)_76px] sm:gap-3 sm:px-4"
             >
-              <span className="grid place-items-center font-mono text-lg tabular-nums leading-none text-muted">
-                {dropped ? "—" : (e.cutRank ?? "—")}
-              </span>
-              <span
-                aria-hidden="true"
-                className="text-xs"
-                style={{
-                  color: delta > 0 ? "var(--up)" : delta < 0 ? "var(--down)" : "transparent",
-                }}
-              >
-                {delta > 0 ? "▲" : delta < 0 ? "▼" : "•"}
-              </span>
-              <CoinIcon ticker={e.ticker} src={meta.get(e.symbol)?.imageUrl ?? null} size={28} />
+              {/* The place at the cut on the tile, and the crown on whoever
+                  took it — the live board's arrangement. */}
+              <RankedCoin
+                ticker={e.ticker}
+                src={meta.get(e.symbol)?.imageUrl ?? null}
+                rank={dropped ? "—" : (e.cutRank ?? "—")}
+                crown={e.cutRank === 1 ? "Took the crown" : undefined}
+              />
               <span className="min-w-0">
-                <span className="block truncate font-semibold text-foreground">
-                  {e.ticker}
-                  {e.cutRank === 1 && (
-                    <span title="Took the crown" className="ml-1.5">
-                      👑
-                    </span>
-                  )}
+                <span className="flex min-w-0 items-baseline gap-1">
+                  <span className="truncate font-semibold text-foreground">{e.ticker}</span>
+                  <MoveArrow delta={delta} />
                 </span>
                 <span className="block truncate font-mono text-[11px] tabular-nums text-muted">
                   rank {e.startRank} → {dropped ? "off the board" : (e.cutRank ?? "—")}

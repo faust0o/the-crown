@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { proxied } from "./proxied";
 import { cx } from "../ui";
 
@@ -64,6 +64,64 @@ export function CoinIcon({
           style={{ width: mark, height: mark }}
         />
       )}
+    </span>
+  );
+}
+
+/**
+ * A coin's tile wearing its place on the board: the rank on a tag at its foot,
+ * and the crown on its head while it has one.
+ *
+ * Both used to be columns of their own beside the tile — on a phone, a fifth of
+ * the row spent on a digit and an arrow before the ticker had any room. On the
+ * tile they cost no width at all, and the crown reads as worn rather than
+ * listed.
+ */
+export function RankedCoin({
+  ticker,
+  src,
+  rank,
+  crown,
+  size = 28,
+}: {
+  ticker: string;
+  src?: string | null;
+  /** The place to print — a number, or "—" for a coin with none. */
+  rank: ReactNode;
+  /** Draws the crown on the tile; the text is its name for a screen reader. */
+  crown?: string;
+  size?: number;
+}) {
+  return (
+    <span className="relative inline-grid shrink-0">
+      <CoinIcon ticker={ticker} src={src} size={size} />
+      {crown && (
+        <span
+          role="img"
+          aria-label={crown}
+          title={crown}
+          className="pointer-events-none absolute -top-[11px] left-1/2 -translate-x-1/2 text-[13px] leading-none"
+        >
+          👑
+        </span>
+      )}
+      <span className="absolute -bottom-1 -left-1 grid h-4 min-w-4 place-items-center rounded border border-hairline bg-background px-0.5 font-mono text-[10px] leading-none font-semibold tabular-nums text-secondary">
+        {rank}
+      </span>
+    </span>
+  );
+}
+
+/** Which way a coin has moved since the open, set beside its ticker. Nothing for no move. */
+export function MoveArrow({ delta }: { delta: number }) {
+  if (delta === 0) return null;
+  return (
+    <span
+      aria-hidden="true"
+      className="shrink-0 text-[10px] leading-none"
+      style={{ color: delta > 0 ? "var(--up)" : "var(--down)" }}
+    >
+      {delta > 0 ? "▲" : "▼"}
     </span>
   );
 }

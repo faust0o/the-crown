@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { formatCompact } from "../format";
 import { Chip, Section, TONE_COLOR, type Tone } from "../ui";
-import { CoinIcon } from "./CoinIcon";
+import { MoveArrow, RankedCoin } from "./CoinIcon";
 import { formatPrice } from "./format";
 import type { Direction, Entry, Line, Standing } from "./graphql";
 
@@ -142,7 +142,7 @@ function RankRow({
             }
           : undefined
       }
-      className={`absolute inset-x-0 flex items-center gap-2 overflow-hidden rounded-lg px-1.5 sm:gap-3 sm:px-2 ${
+      className={`absolute inset-x-0 flex items-center gap-2.5 overflow-hidden rounded-lg px-2 sm:gap-3 sm:px-3 ${
         selected
           ? "mat-row-on cursor-pointer"
           : selectable
@@ -163,37 +163,24 @@ function RankRow({
         transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
       }}
     >
-      {/* One fixed box for every row: an emoji's side bearings differ from a
-          digit's, so right-aligning both left the crown off the number column.
-          Centring the box aligns "1", "10" and the crown alike. */}
-      <span
-        className="grid w-5 shrink-0 place-items-center font-mono text-base tabular-nums leading-none text-muted sm:w-6 sm:text-lg"
-        title={entry?.isCrown ? "Wearing the crown" : undefined}
-      >
-        {entry?.isCrown ? (
-          <span aria-label="wearing the crown" className="text-base leading-none">
-            👑
-          </span>
-        ) : (
-          s.rank
-        )}
-      </span>
-      <span
-        aria-hidden="true"
-        className="w-3 shrink-0 text-xs"
-        style={{ color: delta > 0 ? "var(--up)" : delta < 0 ? "var(--down)" : "transparent" }}
-      >
-        {delta > 0 ? "▲" : delta < 0 ? "▼" : "•"}
-      </span>
-      {/* The logo is the first thing the narrowest phones give up: it says what
-          the ticker beside it says, and the ticker is what gets read. */}
-      <span className="shrink-0 max-[359px]:hidden">
-        <CoinIcon ticker={s.ticker} src={s.imageUrl} size={28} />
-      </span>
+      {/* The rank, and the crown, are worn on the tile — see `RankedCoin`. The
+          crown holder still shows its number: it wore the crown at the open,
+          and where it stands now is the question the round is asking. */}
+      <RankedCoin
+        ticker={s.ticker}
+        src={s.imageUrl}
+        rank={s.rank}
+        crown={entry?.isCrown ? "Wearing the crown" : undefined}
+      />
 
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold text-foreground sm:text-base">
-          {s.ticker}
+        <span className="flex min-w-0 items-baseline gap-1">
+          <span className="truncate text-sm font-semibold text-foreground sm:text-base">
+            {s.ticker}
+          </span>
+          {/* Which way it has gone since the open, beside the name it belongs
+              to rather than in a column of its own. */}
+          <MoveArrow delta={delta} />
         </span>
         {/* The price is the one figure on the row the race is not about, so it
             is the one a phone does without. */}
