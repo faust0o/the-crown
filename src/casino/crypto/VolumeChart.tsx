@@ -1,12 +1,13 @@
 import { Liveline } from "liveline";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useFullscreen } from "../hooks/useFullscreen";
 import { ROOMY, useMediaQuery } from "../hooks/useMediaQuery";
 import { useColorScheme } from "../theme";
 import { proxied } from "./proxied";
 import { raceSeries } from "./race";
 import { fallbackColor, legibleOn, useIconColors } from "./useIconColors";
 
-import { Section } from "../ui";
+import { IconButton, Section, cx } from "../ui";
 import type { RankPoint, Standing } from "./graphql";
 
 
@@ -113,46 +114,96 @@ export function VolumeChart({
     [history, standings, iconColors, hidden, shift, scheme, replay, openedAt]
   );
 
+  // Full screen is the whole section — the caption's stats and the key that
+  // closes it come along — laid out as a column the chart stretches to fill.
+  const { ref: frame, full, toggle } = useFullscreen<HTMLDivElement>();
+
   return (
-    <Section title={title}>
-      <div
-        className="h-[200px] min-h-0 sm:h-[280px] lg:h-[320px] [@media(max-height:500px)]:h-[180px]"
-        role="img"
-        aria-label={`Trailing ${window} traded volume for the ten competing coins`}
+    <div
+      ref={frame}
+      className={cx(
+        full &&
+          "casino-gutter fixed inset-0 z-40 flex flex-col overscroll-contain bg-background pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]"
+      )}
+    >
+      <Section
+        title={title}
+        aside={
+          <IconButton
+            label={full ? "Exit full screen" : "Full screen"}
+            size="sm"
+            // Hung into the caption's padding rather than heightening its row.
+            className="-my-1.5"
+            onClick={toggle}
+          >
+            <FullscreenGlyph full={full} />
+          </IconButton>
+        }
+        className={full ? "mb-0! min-h-0 flex-1" : undefined}
+        bodyClassName={full ? "min-h-0 flex-1" : undefined}
       >
-        <Liveline
-          data={primary}
-          value={value}
-          series={series}
-          // liveline draws to a canvas, so it cannot read the CSS tokens the
-          // rest of the page themes with — it has to be told. Pinned to "light",
-          // its grid and empty state were all but invisible on a dark board.
-          theme={scheme}
-          color={series[0]?.color ?? "#f7931a"}
-          grid
-          badge
-          badgeVariant="minimal"
-          pulse={false}
-          momentum={false}
-          fill={false}
-          scrub
-          onSeriesToggle={onSeriesToggle}
-          seriesToggleCompact={!roomy}
-          // A finished round is drawn once and held — see `openedAt`. Held means
-          // its data and its clock, not the legend: paused, liveline draws from
-          // a snapshot, so hiding a line is its fade alone, and upstream froze
-          // that fade along with everything else. The patch runs it, and the
-          // axis refit after it, on real time.
-          paused={replay}
-          window={spanSecs}
-          emptyText="collecting…"
-          formatValue={formatValue}
-          formatTime={formatTime}
-          // Keep the plot clear of the card header and the legend strip liveline
-          // draws at the top — without this the leader's line runs into both.
-          padding={{ top: 18, bottom: 40, right: 46, left: 4 }}
-        />
-      </div>
-    </Section>
+        <div
+          className={
+            full
+              ? "h-full"
+              : "h-[200px] min-h-0 sm:h-[280px] lg:h-[320px] [@media(max-height:500px)]:h-[180px]"
+          }
+          role="img"
+          aria-label={`Trailing ${window} traded volume for the ten competing coins`}
+        >
+          <Liveline
+            data={primary}
+            value={value}
+            series={series}
+            // liveline draws to a canvas, so it cannot read the CSS tokens the
+            // rest of the page themes with — it has to be told. Pinned to "light",
+            // its grid and empty state were all but invisible on a dark board.
+            theme={scheme}
+            color={series[0]?.color ?? "#f7931a"}
+            grid
+            badge
+            badgeVariant="minimal"
+            pulse={false}
+            momentum={false}
+            fill={false}
+            scrub
+            onSeriesToggle={onSeriesToggle}
+            seriesToggleCompact={!roomy}
+            // A finished round is drawn once and held — see `openedAt`. Held means
+            // its data and its clock, not the legend: paused, liveline draws from
+            // a snapshot, so hiding a line is its fade alone, and upstream froze
+            // that fade along with everything else. The patch runs it, and the
+            // axis refit after it, on real time.
+            paused={replay}
+            window={spanSecs}
+            emptyText="collecting…"
+            formatValue={formatValue}
+            formatTime={formatTime}
+            // Keep the plot clear of the card header and the legend strip liveline
+            // draws at the top — without this the leader's line runs into both.
+            padding={{ top: 18, bottom: 40, right: 46, left: 4 }}
+          />
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+/** Four corners, pointing out to open full screen and in to close it. */
+function FullscreenGlyph({ full }: { full: boolean }) {
+  return (
+    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true" fill="none">
+      <path
+        d={
+          full
+            ? "M6 2.5V6H2.5M10 2.5V6h3.5M10 13.5V10h3.5M6 13.5V10H2.5"
+            : "M2.5 6V2.5H6M13.5 6V2.5H10M13.5 10v3.5H10M2.5 10v3.5H6"
+        }
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }

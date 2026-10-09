@@ -23,7 +23,7 @@ export function Section({
   children,
 }: {
   title: ReactNode;
-  /** Opposite the caption: a total, a sync age, a status. */
+  /** Opposite the caption: a total, a sync age, a status, a key. */
   aside?: ReactNode;
   className?: string;
   bodyClassName?: string;
@@ -31,7 +31,10 @@ export function Section({
 }) {
   return (
     <section className={cx("mb-4 flex min-w-0 flex-col", className)}>
-      <div className="mb-2 flex items-baseline justify-between gap-4 border-b border-hairline pb-1.5">
+      {/* Centred rather than on a shared baseline: an icon key has no baseline,
+          and was set with its foot on the caption's, riding high and heightening
+          the row. A line of text lands within a quarter pixel either way. */}
+      <div className="mb-2 flex items-center justify-between gap-4 border-b border-hairline pb-1.5">
         <h2 className="mat-engrave m-0 text-xs font-semibold uppercase tracking-wider text-muted">
           {title}
         </h2>
