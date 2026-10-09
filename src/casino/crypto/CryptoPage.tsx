@@ -206,6 +206,8 @@ function CrownInner() {
   }, [replayId, linked]);
   /** The round that ended under the player, waiting on its settlement. */
   const [ended, setEnded] = useState<string | null>(null);
+  /** The live chart is full screen — see the replay's trigger below. */
+  const [chartFull, setChartFull] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [direction, setDirection] = useState<Direction>("HIGHER");
   const [busy, setBusy] = useState(false);
@@ -271,7 +273,10 @@ function CrownInner() {
 
   // Settlement lands a tick or two after the round ends, so the round is asked
   // for until it comes back SETTLED — and given up on if it never does. A player
-  // who has gone to their portfolio or another round by then is left there.
+  // who has gone to their portfolio or another round by then is left there, and
+  // so is one watching the chart full screen: that view is the race's lines,
+  // whichever round they are in, and the replay taking the board's place would
+  // take the chart down with it. The result itself still arrives, over the top.
   const { data: recent } = useQuery(ROUNDS, {
     variables: { limit: 3 },
     skip: !ended,
@@ -285,8 +290,8 @@ function CrownInner() {
     );
     if (!settled) return;
     setEnded(null);
-    if (tab === "board" && !replayId) openReplay(settled, true);
-  }, [ended, recent, tab, replayId, openReplay]);
+    if (tab === "board" && !replayId && !chartFull) openReplay(settled, true);
+  }, [ended, recent, tab, replayId, chartFull, openReplay]);
   useEffect(() => {
     if (!ended) return;
     const timer = setTimeout(() => setEnded(null), 120_000);
@@ -759,6 +764,7 @@ function CrownInner() {
                   history={data?.cryptoRankHistory ?? []}
                   standings={field}
                   window={status?.window ?? "1h"}
+                  onFullscreen={setChartFull}
                 />
                 {loading && !field.length ? (
                   <p className="px-2 py-8 text-center text-sm text-muted">

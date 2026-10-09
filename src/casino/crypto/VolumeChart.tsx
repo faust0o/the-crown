@@ -1,5 +1,5 @@
 import { Liveline } from "liveline";
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useFullscreen } from "../hooks/useFullscreen";
 import { ROOMY, useMediaQuery } from "../hooks/useMediaQuery";
 import { useColorScheme } from "../theme";
@@ -31,6 +31,7 @@ export function VolumeChart({
   standings,
   window,
   replay = false,
+  onFullscreen,
 }: {
   /** The caption row. The page sets the round's stats there — see `GameStats`. */
   title: ReactNode;
@@ -39,6 +40,8 @@ export function VolumeChart({
   window: string;
   /** Draw a finished round rather than the live board — see `shift` below. */
   replay?: boolean;
+  /** Told when the chart goes full screen and when it comes back. */
+  onFullscreen?: (full: boolean) => void;
 }) {
   const iconColors = useIconColors(standings.map((s) => proxied(s.imageUrl)));
   const scheme = useColorScheme();
@@ -116,11 +119,15 @@ export function VolumeChart({
 
   // Full screen is the whole section — the caption's stats and the key that
   // closes it come along — laid out as a column the chart stretches to fill.
-  const { ref: frame, full, toggle } = useFullscreen<HTMLDivElement>();
+  const { full, toggle } = useFullscreen();
+  useEffect(() => {
+    if (!full) return;
+    onFullscreen?.(true);
+    return () => onFullscreen?.(false);
+  }, [full, onFullscreen]);
 
   return (
     <div
-      ref={frame}
       className={cx(
         full &&
           "casino-gutter fixed inset-0 z-40 flex flex-col overscroll-contain bg-background pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]"
