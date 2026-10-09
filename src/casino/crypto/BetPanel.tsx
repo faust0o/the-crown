@@ -1,3 +1,4 @@
+import { NetworkStatus } from "@apollo/client";
 import { useQuery } from "@apollo/client/react";
 import { useEffect, useId, useRef, useState } from "react";
 import { formatCompact, formatCredits } from "../format";
@@ -227,14 +228,15 @@ export function BetPanel({
   // Asked for on the Buy side as well, whenever there is a position to sell:
   // the Sell tab used to send for its price only once it was pressed, so it
   // opened on a dead key and a dash, and lit up a round trip later.
-  const { data: quoted, loading: pricing } = useQuery(SELL_QUOTE, {
+  const sellQuery = useQuery(SELL_QUOTE, {
     variables: { symbol: standing?.symbol ?? "", direction: sellDirection, stake: sellAmount },
     skip: !standing || sellAmount <= 0,
     pollInterval: POLL_MS,
     fetchPolicy: "cache-and-network",
     errorPolicy: "all",
   });
-  const sale = isBuy ? null : (quoted?.cryptoSellQuote ?? null);
+  const sale = isBuy ? null : (sellQuery.data?.cryptoSellQuote ?? null);
+  const pricing = asking(sellQuery);
 
   /**
    * What this stake would fill at and pay, from the server, at this size.
@@ -244,14 +246,15 @@ export function BetPanel({
    * and pays the average of the walk. Multiplying the board price out quoted a
    * 10,000 stake on a 17¢ line at nearly 60,000 to win, and it paid 14,000.
    */
-  const { data: bought, loading: quoting } = useQuery(BUY_QUOTE, {
+  const buyQuery = useQuery(BUY_QUOTE, {
     variables: { symbol: standing?.symbol ?? "", direction, stake: amount },
     skip: !isBuy || !standing || amount <= 0 || !line?.available,
     pollInterval: POLL_MS,
     fetchPolicy: "cache-and-network",
     errorPolicy: "all",
   });
-  const fill = isBuy ? (bought?.cryptoBuyQuote ?? null) : null;
+  const fill = isBuy ? (buyQuery.data?.cryptoBuyQuote ?? null) : null;
+  const quoting = asking(buyQuery);
 
   // What the ticket shows, as against what it acts on: the last price stays up
   // through the refetch a new stake or outcome sets off, rather than blinking
@@ -697,6 +700,21 @@ function Payout({
       </span>
     </div>
   );
+}
+
+/**
+ * Whether a quote is being asked for a *new* question — a stake, an outcome or
+ * a side the ticket has not been priced at yet.
+ *
+ * Not `loading`, which Apollo also raises for every background poll. Taking a
+ * poll for a question in flight made everything that waits on one blink on the
+ * poll's two-second beat: once a round locked, the server answers every poll
+ * with no quote, so "Betting is closed for this round." vanished for the
+ * length of each round trip and came back, and anything held through a re-price
+ * reappeared with it.
+ */
+function asking({ loading, networkStatus }: { loading: boolean; networkStatus: NetworkStatus }) {
+  return loading && networkStatus !== NetworkStatus.poll;
 }
 
 /**

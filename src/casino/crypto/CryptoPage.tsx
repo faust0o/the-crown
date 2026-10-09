@@ -408,7 +408,19 @@ function CrownInner() {
     [allBets, round?.id]
   );
 
-  const open = round?.status === "OPEN" && new Date(round.lockAt).getTime() > Date.now();
+  const lockAt = round ? new Date(round.lockAt).getTime() : 0;
+  const open = round?.status === "OPEN" && lockAt > Date.now();
+  // Look again the moment betting closes. `open` is read off the clock during
+  // render, and the page otherwise renders on the poll — so the ticket went on
+  // offering a bet for up to a poll after the lock, and could say the line was
+  // "unavailable" (its quote having come back empty) before it said why.
+  const [, closed] = useState(0);
+  useEffect(() => {
+    const wait = lockAt - Date.now();
+    if (wait <= 0) return;
+    const timer = setTimeout(() => closed((n) => n + 1), wait + 50);
+    return () => clearTimeout(timer);
+  }, [lockAt]);
   /**
    * Being signed out is no longer a refusal.
    *
