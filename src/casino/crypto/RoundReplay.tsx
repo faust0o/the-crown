@@ -378,6 +378,7 @@ function FinalBoard({
           // A token can fall off the board before the first sample of the round
           // catches it, and "$0" would read as a token that stopped trading.
           const volume = cutVolume.get(e.symbol);
+          const name = meta.get(e.symbol)?.name ?? e.ticker;
           return (
             <li
               key={e.symbol}
@@ -393,10 +394,13 @@ function FinalBoard({
               />
               <span className="min-w-0">
                 <span className="flex min-w-0 items-baseline gap-1">
-                  <span className="truncate font-semibold text-foreground">{e.ticker}</span>
                   <MoveArrow delta={delta} />
+                  <span className="truncate font-semibold text-foreground sm:shrink-0">{e.ticker}</span>
+                  {name !== e.ticker && (
+                    <span className="ml-1 min-w-0 truncate text-sm text-muted max-sm:hidden">{name}</span>
+                  )}
                 </span>
-                <span className="block truncate font-mono text-[11px] tabular-nums text-muted">
+                <span className="block truncate pl-3.5 font-mono text-[11px] tabular-nums text-muted">
                   rank {e.startRank} → {dropped ? "off the board" : (e.cutRank ?? "—")}
                   {volume != null && ` · $${formatCompact(volume)}`}
                   {e.isCrown && <span className="ml-1.5">· crowned at the open, no book</span>}

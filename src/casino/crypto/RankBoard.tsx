@@ -174,17 +174,23 @@ function RankRow({
       />
 
       <span className="min-w-0 flex-1">
+        {/* Which way it has gone since the open, in front of the ticker it
+            belongs to; and, where there is room for it, the coin's full name.
+            A coin known only by its ticker has no second name to show. */}
         <span className="flex min-w-0 items-baseline gap-1">
-          <span className="truncate text-sm font-semibold text-foreground sm:text-base">
+          <MoveArrow delta={delta} />
+          <span className="truncate text-sm font-semibold text-foreground sm:shrink-0 sm:text-base">
             {s.ticker}
           </span>
-          {/* Which way it has gone since the open, beside the name it belongs
-              to rather than in a column of its own. */}
-          <MoveArrow delta={delta} />
+          {s.name !== s.ticker && (
+            <span className="ml-1 min-w-0 truncate text-sm text-muted max-sm:hidden">{s.name}</span>
+          )}
         </span>
         {/* The price is the one figure on the row the race is not about, so it
-            is the one a phone does without. */}
-        <span className="block truncate font-mono text-[11px] tabular-nums text-muted">
+            is the one a phone does without. Indented past the arrow's slot,
+            so the arrow hangs in front of both lines and the two read as one
+            block under the ticker. */}
+        <span className="block truncate pl-3.5 font-mono text-[11px] tabular-nums text-muted">
           ${formatCompact(s.quoteVolume)}
           <span className="max-sm:hidden"> · {formatPrice(s.price)}</span>
         </span>

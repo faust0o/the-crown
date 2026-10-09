@@ -112,16 +112,21 @@ export function RankedCoin({
   );
 }
 
-/** Which way a coin has moved since the open, set beside its ticker. Nothing for no move. */
+/**
+ * Which way a coin has moved since the open, set in front of its ticker.
+ *
+ * The slot is the same width whether or not there is an arrow in it: in front
+ * of the ticker, an arrow that came and went would shove the name sideways and
+ * leave the board's tickers out of line with each other.
+ */
 export function MoveArrow({ delta }: { delta: number }) {
-  if (delta === 0) return null;
   return (
     <span
       aria-hidden="true"
-      className="shrink-0 text-[10px] leading-none"
+      className="w-2.5 shrink-0 text-[10px] leading-none"
       style={{ color: delta > 0 ? "var(--up)" : "var(--down)" }}
     >
-      {delta > 0 ? "▲" : "▼"}
+      {delta > 0 ? "▲" : delta < 0 ? "▼" : "\u00a0"}
     </span>
   );
 }
